@@ -1,2 +1,2 @@
 # usv-deal-hotlist
-A Streamlit app that surfaces promising, thematically aligned companies for Union Square Ventures, with quick-view funding data, market context, and investor leads.
+USV Deal Hotlist is a lightweight scouting tool designed to help investors at Union Square Ventures quickly spot companies aligned with their current investment themes. The app pulls together curated deal lists, funding history, and key investors into a simple, filterable dashboard. It highlights opportunities by theme, market size, and growth stage, enabling faster identification of high-potential companies worth deeper diligence.
