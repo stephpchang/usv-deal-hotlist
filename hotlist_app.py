@@ -1,6 +1,9 @@
 # hotlist_app.py
-import streamlit as st
+import os
+from urllib.parse import urlparse, urlencode, quote_plus
+import numpy as np
 import pandas as pd
+import streamlit as st
 from datetime import datetime, timezone
 from io import BytesIO
 from importlib.util import find_spec
@@ -9,6 +12,20 @@ from importlib.util import find_spec
 # Page setup
 # -----------------------------
 st.set_page_config(page_title="USV Deal Hotlist", layout="wide")
+
+# -----------------------------
+# Config: scoring & optional deep link to DD Copilot
+# -----------------------------
+WEIGHTS = {
+    "recent_funding": 0.35,   # uses recent_funding_usd (or total_raised) normalized 0..1
+    "growth_signal": 0.25,    # avg of hiring_index & traffic_index (0..1)
+    "thematic_fit": 0.25,     # 1 if thesis in focus_theses, else 0
+    "founder_signal": 0.15,   # 1 if founder_signal truthy, else 0
+}
+THESES = ["AI / Machine Intelligence", "AI / Open Source", "Climate Tech", "Climate + Fintech",
+          "Developer Tools", "Fintech Infrastructure", "Open Data / Privacy Infra",
+          "Decentralized ID", "Open Internet / DeFi"]
+DDLITE_URL = os.getenv("DDLITE_URL")  # e.g. http://localhost:8501 or your hosted Copilot
 
 # -----------------------------
 # Helpers
@@ -41,10 +58,78 @@ def as_badge(txt: str) -> str:
         f"{safe}</span>"
     )
 
+def canonical_domain(url_or_domain: str) -> str:
+    if not url_or_domain:
+        return ""
+    s = str(url_or_domain).strip()
+    if "://" not in s:
+        s = "https://" + s
+    try:
+        host = urlparse(s).netloc.lower().split(":")[0]
+        return host
+    except Exception:
+        return str(url_or_domain).lower()
+
+def normalize_series_0_1(series: pd.Series) -> pd.Series:
+    s = series.astype(float)
+    min_v = np.nanmin(s.values) if np.isfinite(s.values).any() else 0.0
+    max_v = np.nanmax(s.values) if np.isfinite(s.values).any() else 0.0
+    if max_v <= min_v:
+        return pd.Series([0.0] * len(s), index=s.index)
+    return (s - min_v) / (max_v - min_v)
+
+def compute_score_row(row: pd.Series, focus_theses: list[str]) -> float:
+    funding = float(row.get("recent_funding_usd_norm") or 0.0)  # 0..1
+    # growth: average of hiring/traffic (already expected 0..1)
+    h = row.get("hiring_index", np.nan)
+    t = row.get("traffic_index", np.nan)
+    growth = float(np.nanmean([h, t]))
+    if np.isnan(growth):
+        growth = 0.0
+    growth = max(0.0, min(1.0, growth))
+    thematic = 1.0 if focus_theses and (row.get("thesis") in focus_theses) else 0.0
+    fs = str(row.get("founder_signal", "")).strip().lower()
+    founder = 1.0 if fs in ("1", "true", "yes", "y") else 0.0
+    score = (
+        funding * WEIGHTS["recent_funding"] +
+        growth  * WEIGHTS["growth_signal"] +
+        thematic* WEIGHTS["thematic_fit"] +
+        founder * WEIGHTS["founder_signal"]
+    )
+    return round(score * 100.0, 1)
+
+def score_breakdown(row: pd.Series, focus_theses: list[str]) -> dict:
+    funding = float(row.get("recent_funding_usd_norm") or 0.0)
+    h = row.get("hiring_index", np.nan)
+    t = row.get("traffic_index", np.nan)
+    growth = float(np.nanmean([h, t]))
+    if np.isnan(growth):
+        growth = 0.0
+    growth = max(0.0, min(1.0, growth))
+    thematic = 1.0 if focus_theses and (row.get("thesis") in focus_theses) else 0.0
+    fs = str(row.get("founder_signal", "")).strip().lower()
+    founder = 1.0 if fs in ("1", "true", "yes", "y") else 0.0
+    return {
+        "recent_funding": round(funding * WEIGHTS["recent_funding"] * 100, 1),
+        "growth_signal":  round(growth  * WEIGHTS["growth_signal"]  * 100, 1),
+        "thematic_fit":   round(thematic* WEIGHTS["thematic_fit"]   * 100, 1),
+        "founder_signal": round(founder * WEIGHTS["founder_signal"] * 100, 1),
+    }
+
+def deep_link_to_copilot(name: str, website: str) -> str | None:
+    if not DDLITE_URL:
+        return None
+    # Pass both if available; your Copilot can read either 'company' or 'website'
+    q = {}
+    if name: q["company"] = name
+    if website: q["website"] = website
+    return f"{DDLITE_URL}?{urlencode(q)}" if q else DDLITE_URL
+
 # -----------------------------
 # Curated demo dataset (public-info tone)
 # Fields: company, thesis, stage, total_raised, last_round, notable_investors[list],
 #         one_liner, website, sources[list], why_usv, why_now, intro_hint
+# Optional scoring fields you can add later: recent_funding_usd, hiring_index, traffic_index, founder_signal
 # -----------------------------
 data = [
     dict(
@@ -59,7 +144,8 @@ data = [
         sources=["https://www.watershed.com/blog", "https://techcrunch.com/"],
         why_usv="Core to climate mitigation; strong enterprise wedge with regulatory tailwinds.",
         why_now="Enterprises racing to meet reporting standards; expanding categories beyond accounting.",
-        intro_hint="Ask for 3 enterprise customer references and time-to-implementation metrics."
+        intro_hint="Ask for 3 enterprise customer references and time-to-implementation metrics.",
+        hiring_index=0.6, traffic_index=0.7, founder_signal=1
     ),
     dict(
         company="Span.io",
@@ -73,7 +159,8 @@ data = [
         sources=["https://www.span.io/blog", "https://www.businesswire.com/"],
         why_usv="Hardware + software layer at the home edge; potential network effects across devices.",
         why_now="Electrification wave + DER incentives; panel as control point is gaining adoption.",
-        intro_hint="Ask about install velocity, partners, and attach rates for EV/solar/batteries."
+        intro_hint="Ask about install velocity, partners, and attach rates for EV/solar/batteries.",
+        hiring_index=0.5, traffic_index=0.55, founder_signal=0
     ),
     dict(
         company="Perplexity AI",
@@ -87,7 +174,8 @@ data = [
         sources=["https://www.reuters.com/technology/"],  # placeholder source
         why_usv="Aligns with 'open internet' & machine intelligence; strong engagement loops.",
         why_now="Exploding daily usage; moving from consumer curiosity to daily workflow.",
-        intro_hint="Ask about retention cohorts and enterprise/education use cases."
+        intro_hint="Ask about retention cohorts and enterprise/education use cases.",
+        hiring_index=0.9, traffic_index=0.95, founder_signal=1
     ),
     dict(
         company="Hugging Face",
@@ -101,7 +189,8 @@ data = [
         sources=["https://huggingface.co/blog"],
         why_usv="Open networks & developer ecosystems; durable community moat.",
         why_now="Model hosting/inference partnerships expanding; developer pull remains strong.",
-        intro_hint="Ask about paid usage mix, enterprise plans, and ecosystem monetization."
+        intro_hint="Ask about paid usage mix, enterprise plans, and ecosystem monetization.",
+        hiring_index=0.75, traffic_index=0.85, founder_signal=1
     ),
     dict(
         company="Warp",
@@ -115,7 +204,8 @@ data = [
         sources=["https://www.warp.dev/blog"],
         why_usv="Developer productivity + network effects; wedge into daily workflows.",
         why_now="AI-native commands and team features are accelerating adoption.",
-        intro_hint="Ask for active team usage, command share rates, and AI resolution metrics."
+        intro_hint="Ask for active team usage, command share rates, and AI resolution metrics.",
+        hiring_index=0.55, traffic_index=0.6, founder_signal=0
     ),
     dict(
         company="Teller",
@@ -129,7 +219,8 @@ data = [
         sources=["https://teller.io/blog"],
         why_usv="Open finance rails; cleaner data access for consumer/SMB fintech.",
         why_now="Banks tightening; developers want direct, reliable data integrations.",
-        intro_hint="Ask about bank coverage, latency/reliability SLOs, and top fintech adopters."
+        intro_hint="Ask about bank coverage, latency/reliability SLOs, and top fintech adopters.",
+        hiring_index=0.25, traffic_index=0.3, founder_signal=0
     ),
     dict(
         company="Plaid Climate",
@@ -143,7 +234,8 @@ data = [
         sources=["https://plaid.com/blog/"],
         why_usv="Intersection of open finance and climate; unique data signal for impact reporting.",
         why_now="Banks/fintechs under pressure to offer climate reporting to consumers/SMBs.",
-        intro_hint="Ask about pilot partners and accuracy of emissions estimation models."
+        intro_hint="Ask about pilot partners and accuracy of emissions estimation models.",
+        hiring_index=0.3, traffic_index=0.4, founder_signal=0
     ),
     dict(
         company="Aleo",
@@ -157,7 +249,8 @@ data = [
         sources=["https://www.aleo.org/blog"],
         why_usv="Privacy-preserving apps for the open internet; crypto rails for agents.",
         why_now="ZK tooling maturing; developers shipping beyond POCs.",
-        intro_hint="Ask about top dev projects, TVL, and onchain activity growth."
+        intro_hint="Ask about top dev projects, TVL, and onchain activity growth.",
+        hiring_index=0.45, traffic_index=0.5, founder_signal=0
     ),
     dict(
         company="Worldcoin",
@@ -171,7 +264,8 @@ data = [
         sources=["https://worldcoin.org/blog"],
         why_usv="Identity for open internet & agents; unlocks fair airdrops and spam resistance.",
         why_now="Expanding verification; policy debates drive relevance and adoption questions.",
-        intro_hint="Ask for verified user growth by geography and active developer integrations."
+        intro_hint="Ask for verified user growth by geography and active developer integrations.",
+        hiring_index=0.4, traffic_index=0.55, founder_signal=0
     ),
     dict(
         company="Uniswap Labs",
@@ -185,11 +279,29 @@ data = [
         sources=["https://blog.uniswap.org/"],
         why_usv="Open financial infrastructure; network effects & protocol-driven moats.",
         why_now="Onchain activity cycling up; L2 expansion and new product surfaces.",
-        intro_hint="Ask about L2 share, fee capture vs protocol, and ecosystem apps growth."
+        intro_hint="Ask about L2 share, fee capture vs protocol, and ecosystem apps growth.",
+        hiring_index=0.35, traffic_index=0.6, founder_signal=1
     ),
 ]
 
 df = pd.DataFrame(data)
+
+# -----------------------------
+# Derived fields: domain, funding normalization, score
+# -----------------------------
+df["domain"] = df["website"].apply(canonical_domain)
+# recent_funding_usd can be added later; for now use total_raised as proxy
+df["recent_funding_usd"] = df.get("recent_funding_usd", pd.Series([np.nan]*len(df)))
+df["recent_funding_usd"] = df["recent_funding_usd"].fillna(df["total_raised"])
+df["recent_funding_usd_norm"] = normalize_series_0_1(df["recent_funding_usd"].fillna(0))
+
+# -----------------------------
+# Simple de-duplication (domain or company)
+# -----------------------------
+dedupe_before = len(df)
+df = df.sort_values(["company"]).drop_duplicates(subset=["domain"], keep="first")
+df = df.drop_duplicates(subset=["company"], keep="first")
+deduped_count = dedupe_before - len(df)
 
 # -----------------------------
 # Header / Value prop
@@ -197,6 +309,17 @@ df = pd.DataFrame(data)
 st.title("🔥 USV Deal Hotlist")
 st.subheader("Curated companies aligned with USV’s theses — why they matter now and what to do next.")
 st.caption("Demo uses public information and curated notes. No proprietary data or paid APIs.")
+if deduped_count > 0:
+    st.caption(f"De-duplicated {deduped_count} item(s) by domain/company.")
+
+# -----------------------------
+# Session state for assignments & status
+# -----------------------------
+if "owners" not in st.session_state: st.session_state["owners"] = {}
+if "status" not in st.session_state: st.session_state["status"] = {}
+if "notes_map" not in st.session_state: st.session_state["notes_map"] = {}
+
+STATUS_OPTS = ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"]
 
 # -----------------------------
 # Filters
@@ -208,8 +331,16 @@ with st.sidebar:
     pick_thesis = st.selectbox("Thesis", thesis_opts, index=0)
     pick_stage = st.selectbox("Stage", stage_opts, index=0)
     min_amt = st.slider("Min total raised ($M)", 0, int((df["total_raised"].fillna(0).max()) / 1_000_000), 0)
-    sort_by = st.selectbox("Sort by", ["Most recent round label", "Largest total raised", "Company A→Z"], index=0)
 
+    st.markdown("---")
+    focus_theses = st.multiselect("Focus theses (score boost)", THESES, default=[])
+    min_score = st.slider("Min score", 0, 100, 0)
+    sort_by = st.selectbox("Sort by", ["Highest score", "Largest total raised", "Company A→Z", "Most recent round label"], index=0)
+
+    st.markdown("---")
+    hide_pass = st.checkbox("Hide 'Pass' status", value=False)
+
+# Apply basic filters
 f = df.copy()
 if pick_thesis != "All":
     f = f[f["thesis"] == pick_thesis]
@@ -217,14 +348,29 @@ if pick_stage != "All":
     f = f[f["stage"] == pick_stage]
 f = f[f["total_raised"].fillna(0) >= (min_amt * 1_000_000)]
 
-# Sorting (best-effort: we don't have dates, so we sort by label/amount/name)
+# Compute scores on the filtered subset
+f["score"] = f.apply(lambda r: compute_score_row(r, focus_theses), axis=1)
+# Keep breakdown for UI
+f["_breakdown"] = f.apply(lambda r: score_breakdown(r, focus_theses), axis=1)
+
+# Optional: hide 'Pass'
+def row_status(name): return st.session_state["status"].get(name, "New")
+if hide_pass:
+    mask = f["company"].apply(lambda n: row_status(n) != "Pass")
+    f = f[mask]
+
+# Score threshold
+f = f[f["score"] >= min_score]
+
+# Sorting
 if sort_by == "Largest total raised":
     f = f.sort_values("total_raised", ascending=False, na_position="last")
 elif sort_by == "Company A→Z":
     f = f.sort_values("company", ascending=True)
+elif sort_by == "Most recent round label":
+    f = f.sort_values("last_round", ascending=False, na_position="last")
 else:
-    # "Most recent round label" – keep as entered (or sort by stage text)
-    f = f.sort_values("last_round", ascending=False)
+    f = f.sort_values("score", ascending=False, na_position="last")
 
 # -----------------------------
 # Summary metrics (quick story)
@@ -232,8 +378,8 @@ else:
 total_companies = len(f)
 total_raised = f["total_raised"].sum(skipna=True)
 avg_raised = f["total_raised"].mean(skipna=True) if total_companies > 0 else None
+avg_score = round(float(f["score"].mean()), 1) if total_companies > 0 else None
 
-# Unique notable investors across the filtered set
 def _flatten(xs):
     out = []
     for row in xs.dropna():
@@ -242,11 +388,12 @@ def _flatten(xs):
 
 unique_investors = sorted(set(_flatten(f["notable_investors"])) - {""}) if total_companies else []
 st.markdown("### Summary")
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Companies", total_companies)
 c2.metric("Total raised", fmt_money(total_raised))
 c3.metric("Avg total raised", fmt_money(avg_raised))
 c4.metric("Notable investors", len(unique_investors))
+c5.metric("Avg score", "—" if avg_score is None else f"{avg_score}")
 
 # -----------------------------
 # Results
@@ -256,24 +403,37 @@ if total_companies == 0:
     st.info("No companies match your filters.")
 else:
     for _, r in f.iterrows():
+        name = r["company"]
         with st.container(border=True):
             # Title line with badges (avoid nested f-strings)
             thesis_badge = as_badge(r["thesis"])
             stage_badge = as_badge(r["stage"])
             money_badge = as_badge(fmt_money(r["total_raised"]))
-            title_line = "  ".join([f"**{r['company']}**", thesis_badge, stage_badge, money_badge])
+            score_badge = as_badge(f"Score {r['score']}")
+            title_line = "  ".join([f"**{name}**", thesis_badge, stage_badge, money_badge, score_badge])
             st.markdown(title_line, unsafe_allow_html=True)
 
             # One-liner
             st.write(r["one_liner"])
 
-            # Key facts
+            # Key facts row
             col1, col2, col3, col4 = st.columns([3, 3, 3, 3])
             col1.write(f"**Last round:** {r['last_round']}")
             col2.write(f"**Website:** [{r['website']}]({r['website']})")
             invs = ", ".join(r["notable_investors"]) if isinstance(r["notable_investors"], list) else "—"
             col3.write(f"**Notable investors:** {invs if invs else '—'}")
             col4.write(f"**Thesis:** {r['thesis']}")
+
+            # Score breakdown
+            with st.expander("Score breakdown"):
+                bd = r["_breakdown"]
+                st.write(
+                    f"- Recent funding: **{bd['recent_funding']}**"
+                    f"\n- Growth signal: **{bd['growth_signal']}**"
+                    f"\n- Thematic fit: **{bd['thematic_fit']}**"
+                    f"\n- Founder signal: **{bd['founder_signal']}**"
+                    f"\n\n**Total:** {r['score']}"
+                )
 
             # Why USV / Why now
             st.write(f"**Why USV:** {r['why_usv']}")
@@ -284,9 +444,32 @@ else:
                 links = " · ".join([f"[source]({u})" for u in r["sources"]])
                 st.write(f"**Sources:** {links}")
 
+            # Assignment + Status + Deep link row
+            a1, a2, a3, a4 = st.columns([2, 2, 3, 3])
+
+            owner_val = st.session_state["owners"].get(name, "")
+            owner_input = a1.text_input("Owner", value=owner_val, key=f"owner_{name}")
+            st.session_state["owners"][name] = owner_input.strip()
+
+            status_val = st.session_state["status"].get(name, "New")
+            status_input = a2.selectbox("Status", STATUS_OPTS, index=STATUS_OPTS.index(status_val) if status_val in STATUS_OPTS else 0, key=f"status_{name}")
+            st.session_state["status"][name] = status_input
+
+            # Optional notes (short)
+            note_val = st.session_state["notes_map"].get(name, "")
+            note_input = a3.text_input("Short note", value=note_val, key=f"note_{name}")
+            st.session_state["notes_map"][name] = note_input
+
+            # Deep link to DD Copilot
+            link = deep_link_to_copilot(name, r["website"])
+            if link:
+                a4.link_button("Open in DD Copilot", link, use_container_width=True)
+            else:
+                a4.caption("Set DDLITE_URL to enable Copilot deep link")
+
             # Next action: copyable outreach note
             ask = r.get("intro_hint") or "Ask for 3 customer references and latest traction metrics."
-            outreach = f"Hi — exploring {r['company']} for USV’s thesis. Could you intro me to the team? {ask}"
+            outreach = f"Hi — exploring {name} for USV’s thesis. Could you intro me to the team? {ask}"
             st.write("**Next action:**")
             st.code(outreach, language="text")
 
@@ -296,15 +479,23 @@ else:
 st.subheader("Export")
 export_cols = [
     "company", "thesis", "stage", "total_raised", "last_round",
-    "notable_investors", "one_liner", "website", "sources", "why_usv", "why_now"
+    "notable_investors", "one_liner", "website", "sources", "why_usv", "why_now",
+    "score"
 ]
-csv = f[export_cols].to_csv(index=False)
+
+# Build export DF with owner/status/notes merged in
+exp = f[export_cols].copy()
+exp["owner"] = exp["company"].apply(lambda n: st.session_state["owners"].get(n, ""))
+exp["status"] = exp["company"].apply(lambda n: st.session_state["status"].get(n, "New"))
+exp["note"] = exp["company"].apply(lambda n: st.session_state["notes_map"].get(n, ""))
+
+csv = exp.to_csv(index=False)
 st.download_button("Download CSV", csv, "usv_deal_hotlist.csv", "text/csv", use_container_width=True)
 
 if EXCEL_ENGINE:
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine=EXCEL_ENGINE) as writer:
-        f[export_cols].to_excel(writer, index=False, sheet_name="Hotlist")
+        exp.to_excel(writer, index=False, sheet_name="Hotlist")
     st.download_button(
         f"Download Excel ({EXCEL_ENGINE})",
         buf.getvalue(),
