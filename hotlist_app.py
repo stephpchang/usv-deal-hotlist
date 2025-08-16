@@ -1,4 +1,4 @@
-# hotlist_app.py — USV Core–tuned hotlist
+# hotlist_app.py — USV Core hotlist: early-stage only + exclude climate/crypto (defaults ON)
 import os
 from urllib.parse import urlparse, urlencode
 import numpy as np
@@ -14,34 +14,29 @@ from importlib.util import find_spec
 st.set_page_config(page_title="USV Deal Hotlist", layout="wide")
 
 # -----------------------------
-# Config: Core vs non-Core
+# Config
 # -----------------------------
-# USV Core: historically networks/marketplaces, open internet/permissionless protocols,
-# developer tools & infra that enable new networks, and AI where networks/data moats form.
-CORE_THESES = [
-    "AI / Machine Intelligence",
-    "AI / Open Source",
-    "Developer Tools",
-    "Open Data / Privacy Infra",
-    "Open Internet / DeFi",     # Optional for Core; can be toggled off in sidebar
-    "Fintech Infrastructure",
-    # intentionally excludes Climate categories (USV has a separate climate vehicle)
-]
+DDLITE_URL = os.getenv("DDLITE_URL")  # Optional deep link target
 
-# You can still display all theses; we’ll weight Core higher when "USV Core mode" is on.
+# Theses list from your dataset
 ALL_THESES = [
     "AI / Machine Intelligence", "AI / Open Source", "Climate Tech", "Climate + Fintech",
     "Developer Tools", "Fintech Infrastructure", "Open Data / Privacy Infra",
     "Decentralized ID", "Open Internet / DeFi"
 ]
 
-DDLITE_URL = os.getenv("DDLITE_URL")  # Optional deep link target
+# Treat these as NON-Core (to be excluded by default)
+EXCLUDED_THESES_DEFAULT = {
+    "Climate Tech",
+    "Climate + Fintech",
+    "Open Internet / DeFi",
+    "Decentralized ID",
+}
 
-# -----------------------------
-# Scoring knobs
-# -----------------------------
-# Stage fit strongly matters for Core (Seed/A)
+EARLY_STAGE_KEYS = {"pre-seed", "seed", "series a"}  # early-stage only definition
+
 STAGE_WEIGHTS_CORE = {
+    "pre-seed": 1.00,
     "seed": 1.00,
     "series a": 0.90,
     "series b": 0.55,
@@ -52,41 +47,24 @@ STAGE_WEIGHTS_CORE = {
     "unknown": 0.40,
 }
 
-def canonical_stage(s: str) -> str:
-    if not s: return "unknown"
-    x = s.lower()
-    if "seed" in x: return "seed"
-    if "series a" in x: return "series a"
-    if "series b" in x: return "series b"
-    if "series c" in x: return "series c"
-    if "series d" in x: return "series d"
-    if "growth" in x: return "growth"
-    if "spin" in x: return "spin-out"
-    return "unknown"
-
-# Weight stack for Core mode
 WEIGHTS_CORE = {
-    "stage_fit":        0.30,  # Seed/A emphasis
-    "founder_signal":   0.30,  # your differentiator
-    "thematic_fit":     0.25,  # Core theses alignment
-    "growth_signal":    0.10,  # weak signal (hiring/traffic)
-    "capital_eff":      0.05,  # light nudge toward capital efficiency
+    "stage_fit":      0.35,  # Seed/A emphasis
+    "founder_signal": 0.30,  # your differentiator
+    "thematic_fit":   0.25,  # alignment with allowed theses
+    "growth_signal":  0.05,  # weak signal
+    "capital_eff":    0.05,  # smaller $ within-stage → better
 }
 
-# Weight stack for Neutral mode (your old-ish style)
 WEIGHTS_NEUTRAL = {
-    "recent_funding":   0.35,  # not used in Core mode
-    "growth_signal":    0.25,
-    "thematic_fit":     0.25,
-    "founder_signal":   0.15,
+    "recent_funding": 0.35,
+    "growth_signal":  0.25,
+    "thematic_fit":   0.25,
+    "founder_signal": 0.15,
 }
 
 # -----------------------------
 # Helpers
 # -----------------------------
-def tznow():
-    return datetime.now(timezone.utc)
-
 def fmt_money(n: int | float | None) -> str:
     if n is None or pd.isna(n):
         return "—"
@@ -124,6 +102,28 @@ def canonical_domain(url_or_domain: str) -> str:
     except Exception:
         return str(url_or_domain).lower()
 
+def canonical_stage(label: str) -> str:
+    if not label:
+        return "unknown"
+    x = label.lower()
+    if "pre-seed" in x or "pre seed" in x:
+        return "pre-seed"
+    if "seed" in x:
+        return "seed"
+    if "series a" in x:
+        return "series a"
+    if "series b" in x:
+        return "series b"
+    if "series c" in x:
+        return "series c"
+    if "series d" in x:
+        return "series d"
+    if "growth" in x:
+        return "growth"
+    if "spin" in x:
+        return "spin-out"
+    return "unknown"
+
 def normalize_series_0_1(series: pd.Series) -> pd.Series:
     s = series.astype(float)
     vals = s.values.astype(float)
@@ -136,20 +136,21 @@ def normalize_series_0_1(series: pd.Series) -> pd.Series:
     return (s - min_v) / (max_v - min_v)
 
 def deep_link_to_copilot(name: str, website: str) -> str | None:
-    if not DDLITE_URL:
+    base = DDLITE_URL
+    if not base:
         return None
     q = {}
     if name: q["company"] = name
     if website: q["website"] = website
-    return f"{DDLITE_URL}?{urlencode(q)}" if q else DDLITE_URL
+    return f"{base}?{urlencode(q)}" if q else base
 
 # -----------------------------
-# Demo dataset (your original)
+# Demo dataset (yours, unchanged)
 # -----------------------------
-data = [  # unchanged from your message
+data = [
     dict(company="Watershed", thesis="Climate Tech", stage="Series B / Growth",
          total_raised=83_000_000, last_round="Series B (2022)",
-         notable_investors=["Sequoia", "Kleiner Perkins"],
+         notable_investors=["Sequoia","Kleiner Perkins"],
          one_liner="Carbon accounting & reduction platform to help enterprises hit net-zero targets.",
          website="https://www.watershed.com/", sources=["https://www.watershed.com/blog","https://techcrunch.com/"],
          why_usv="Core to climate mitigation; strong enterprise wedge with regulatory tailwinds.",
@@ -244,25 +245,24 @@ df = pd.DataFrame(data)
 # Derived fields
 # -----------------------------
 df["domain"] = df["website"].apply(canonical_domain)
+df["stage_norm"] = df["stage"].apply(canonical_stage)
+
+# Funding proxies (for Neutral mode)
 df["recent_funding_usd"] = df.get("recent_funding_usd", pd.Series([np.nan]*len(df)))
 df["recent_funding_usd"] = df["recent_funding_usd"].fillna(df["total_raised"])
 df["recent_funding_usd_norm"] = normalize_series_0_1(df["recent_funding_usd"].fillna(0))
-df["stage_norm"] = df["stage"].apply(canonical_stage)
 
-# Simple within-stage capital-efficiency proxy:
-# Lower $ within the same stage → higher efficiency.
+# Capital efficiency proxy (within-stage: lower $ ⇒ better)
 def stage_efficiency_proxy(row: pd.Series, stage_group_stats: dict) -> float:
     stg = row.get("stage_norm","unknown")
     amt = float(row.get("total_raised") or 0.0)
     lo, hi = stage_group_stats.get(stg, (0.0, 0.0))
     if hi <= lo:
         return 0.5  # neutral when no comparison
-    # invert so smaller raised → closer to 1.0
     norm = (amt - lo) / (hi - lo)
     norm = min(max(norm, 0.0), 1.0)
     return round(1.0 - norm, 3)
 
-# Precompute per-stage min/max for the proxy
 stage_stats = {}
 for stg, g in df.groupby("stage_norm"):
     vals = g["total_raised"].dropna().astype(float)
@@ -282,7 +282,7 @@ deduped_count = dedupe_before - len(df)
 # Header
 # -----------------------------
 st.title("🔥 USV Deal Hotlist")
-st.subheader("Optimized for USV’s Core Fund: Seed/Series A first, founder-forward, thesis-aligned.")
+st.subheader("USV Core focus: Seed/Series A only, non-Climate, non-Crypto by default.")
 st.caption("Demo uses public information and curated notes. No proprietary data or paid APIs.")
 if deduped_count > 0:
     st.caption(f"De-duplicated {deduped_count} item(s) by domain/company.")
@@ -308,14 +308,21 @@ with st.sidebar:
     min_amt = st.slider("Min total raised ($M)", 0, int((df["total_raised"].fillna(0).max()) / 1_000_000), 0)
 
     st.markdown("---")
-    st.subheader("USV Core mode")
-    core_mode = st.toggle("Prioritize Seed/A & Core theses", value=True)
-    include_defi = st.checkbox("Include Open Internet / DeFi in Core", value=True)
-    # dynamic core theses
-    core_theses_active = [t for t in CORE_THESES if (t != "Open Internet / DeFi" or include_defi)]
+    st.subheader("Core constraints")
+    early_only = st.toggle("Early-stage only (Pre-seed / Seed / Series A)", value=True)
+    exclude_climate_crypto = st.toggle("Exclude Climate & Crypto/Web3 theses", value=True)
 
-    # You can still add ad-hoc focus boosting
-    focus_theses = st.multiselect("Extra thesis boost", ALL_THESES, default=core_theses_active if core_mode else [])
+    # If you want to hand-pick which theses count as Core-allowed:
+    allowed_theses = set(ALL_THESES)
+    if exclude_climate_crypto:
+        allowed_theses = allowed_theses - EXCLUDED_THESES_DEFAULT
+
+    st.markdown("---")
+    st.subheader("Scoring mode")
+    core_mode = st.toggle("Core scoring (Seed/A bias)", value=True)
+
+    # optional ad-hoc boost
+    focus_theses = st.multiselect("Extra thesis boost", sorted(list(allowed_theses)), default=list(allowed_theses))
 
     min_score = st.slider("Min score", 0, 100, 0)
     sort_by = st.selectbox("Sort by", ["Highest score", "Largest total raised", "Company A→Z", "Most recent round label"], index=0)
@@ -324,17 +331,33 @@ with st.sidebar:
     hide_pass = st.checkbox("Hide 'Pass' status", value=False)
 
 # -----------------------------
-# Filter table first
+# Apply filters (order matters)
 # -----------------------------
 f = df.copy()
+
+# Thesis filter UI (optional)
 if pick_thesis != "All":
     f = f[f["thesis"] == pick_thesis]
 if pick_stage != "All":
     f = f[f["stage"] == pick_stage]
+
+# Core thesis allowlist (exclude climate/crypto by default)
+f = f[f["thesis"].isin(allowed_theses)]
+
+# Early-stage only (default ON)
+if early_only:
+    f = f[f["stage_norm"].isin(EARLY_STAGE_KEYS)]
+
+# Amount threshold
 f = f[f["total_raised"].fillna(0) >= (min_amt * 1_000_000)]
 
+# Empty state
+if len(f) == 0:
+    st.info("No companies match your Core filters. Try disabling **Early-stage only** or *Exclude Climate & Crypto/Web3*.")
+    st.stop()
+
 # -----------------------------
-# Scoring functions
+# Scoring
 # -----------------------------
 def growth_signal(row: pd.Series) -> float:
     h = row.get("hiring_index", np.nan)
@@ -346,68 +369,56 @@ def founder_signal01(row: pd.Series) -> float:
     fs = str(row.get("founder_signal", "")).strip().lower()
     return 1.0 if fs in ("1","true","yes","y") else 0.0
 
-def thematic_fit01(row: pd.Series, base_theses: list[str]) -> float:
-    return 1.0 if base_theses and (row.get("thesis") in base_theses) else 0.0
+def thematic_fit01(row: pd.Series, allowed: set[str]) -> float:
+    return 1.0 if row.get("thesis") in allowed else 0.0
 
-def compute_score_core(row: pd.Series, base_theses: list[str], extra_boost: list[str]) -> tuple[float, dict]:
-    weights = WEIGHTS_CORE
+def compute_score_core(row: pd.Series, allowed: set[str], extra_boost: list[str]) -> tuple[float, dict]:
     stage_key = row.get("stage_norm","unknown")
     stage_fit = STAGE_WEIGHTS_CORE.get(stage_key, STAGE_WEIGHTS_CORE["unknown"])
     founder = founder_signal01(row)
-    thematic_base = thematic_fit01(row, base_theses)
+    thematic_base = thematic_fit01(row, allowed)
     thematic_extra = 1.0 if (extra_boost and row.get("thesis") in extra_boost) else 0.0
     thematic = max(thematic_base, thematic_extra)
     growth = growth_signal(row)
     cap_eff = float(row.get("capital_eff") or 0.5)
 
-    score01 = (
-        stage_fit * weights["stage_fit"] +
-        founder   * weights["founder_signal"] +
-        thematic  * weights["thematic_fit"] +
-        growth    * weights["growth_signal"] +
-        cap_eff   * weights["capital_eff"]
-    )
+    w = WEIGHTS_CORE
+    score01 = stage_fit*w["stage_fit"] + founder*w["founder_signal"] + thematic*w["thematic_fit"] + growth*w["growth_signal"] + cap_eff*w["capital_eff"]
     breakdown = {
-        "stage_fit":       round(stage_fit * weights["stage_fit"] * 100, 1),
-        "founder_signal":  round(founder   * weights["founder_signal"] * 100, 1),
-        "thematic_fit":    round(thematic  * weights["thematic_fit"] * 100, 1),
-        "growth_signal":   round(growth    * weights["growth_signal"] * 100, 1),
-        "capital_eff":     round(cap_eff   * weights["capital_eff"] * 100, 1),
+        "stage_fit":       round(stage_fit * w["stage_fit"] * 100, 1),
+        "founder_signal":  round(founder   * w["founder_signal"] * 100, 1),
+        "thematic_fit":    round(thematic  * w["thematic_fit"] * 100, 1),
+        "growth_signal":   round(growth    * w["growth_signal"] * 100, 1),
+        "capital_eff":     round(cap_eff   * w["capital_eff"] * 100, 1),
     }
     return round(score01 * 100, 1), breakdown
 
-def compute_score_neutral(row: pd.Series, focus_theses: list[str]) -> tuple[float, dict]:
-    weights = WEIGHTS_NEUTRAL
+def compute_score_neutral(row: pd.Series, allowed: set[str]) -> tuple[float, dict]:
     funding = float(row.get("recent_funding_usd_norm") or 0.0)
     growth  = growth_signal(row)
-    thematic = thematic_fit01(row, focus_theses)
+    thematic = 1.0 if row.get("thesis") in allowed else 0.0
     founder = founder_signal01(row)
-    score01 = (
-        funding * weights["recent_funding"] +
-        growth  * weights["growth_signal"] +
-        thematic* weights["thematic_fit"] +
-        founder * weights["founder_signal"]
-    )
+    w = WEIGHTS_NEUTRAL
+    score01 = funding*w["recent_funding"] + growth*w["growth_signal"] + thematic*w["thematic_fit"] + founder*w["founder_signal"]
     breakdown = {
-        "recent_funding": round(funding * weights["recent_funding"] * 100, 1),
-        "growth_signal":  round(growth  * weights["growth_signal"]  * 100, 1),
-        "thematic_fit":   round(thematic* weights["thematic_fit"]   * 100, 1),
-        "founder_signal": round(founder * weights["founder_signal"] * 100, 1),
+        "recent_funding": round(funding * w["recent_funding"] * 100, 1),
+        "growth_signal":  round(growth  * w["growth_signal"]  * 100, 1),
+        "thematic_fit":   round(thematic* w["thematic_fit"]   * 100, 1),
+        "founder_signal": round(founder * w["founder_signal"] * 100, 1),
     }
     return round(score01 * 100, 1), breakdown
 
-# Compute scores
 if core_mode:
-    f["score"], f["_breakdown"] = zip(*f.apply(lambda r: compute_score_core(r, core_theses_active, focus_theses), axis=1))
+    f["score"], f["_breakdown"] = zip(*f.apply(lambda r: compute_score_core(r, allowed_theses, focus_theses), axis=1))
 else:
-    f["score"], f["_breakdown"] = zip(*f.apply(lambda r: compute_score_neutral(r, focus_theses), axis=1))
+    f["score"], f["_breakdown"] = zip(*f.apply(lambda r: compute_score_neutral(r, allowed_theses), axis=1))
 
-# Optional: hide 'Pass'
+# Hide Pass
 def row_status(name): return st.session_state["status"].get(name, "New")
 if hide_pass:
     f = f[f["company"].apply(lambda n: row_status(n) != "Pass")]
 
-# Threshold & sorting
+# Threshold & sort
 f = f[f["score"] >= min_score]
 if sort_by == "Largest total raised":
     f = f.sort_values("total_raised", ascending=False, na_position="last")
@@ -419,7 +430,7 @@ else:
     f = f.sort_values("score", ascending=False, na_position="last")
 
 # -----------------------------
-# Summary metrics
+# Summary
 # -----------------------------
 st.markdown("### Summary")
 total_companies = len(f)
@@ -455,8 +466,7 @@ else:
             stage_badge  = as_badge(r["stage"])
             money_badge  = as_badge(fmt_money(r["total_raised"]))
             score_badge  = as_badge(f"Score {r['score']}")
-            title_line = "  ".join([f"**{name}**", thesis_badge, stage_badge, money_badge, score_badge])
-            st.markdown(title_line, unsafe_allow_html=True)
+            st.markdown("  ".join([f"**{name}**", thesis_badge, stage_badge, money_badge, score_badge]), unsafe_allow_html=True)
 
             st.write(r["one_liner"])
 
@@ -473,7 +483,7 @@ else:
                     st.write(
                         f"- Stage fit (Seed/A bias): **{bd['stage_fit']}**"
                         f"\n- Founder signal: **{bd['founder_signal']}**"
-                        f"\n- Thematic fit (Core): **{bd['thematic_fit']}**"
+                        f"\n- Thematic fit (allowed): **{bd['thematic_fit']}**"
                         f"\n- Growth signal: **{bd['growth_signal']}**"
                         f"\n- Capital efficiency: **{bd['capital_eff']}**"
                         f"\n\n**Total:** {r['score']}"
@@ -500,7 +510,9 @@ else:
             st.session_state["owners"][name] = owner_input.strip()
 
             status_val = st.session_state["status"].get(name, "New")
-            status_input = a2.selectbox("Status", STATUS_OPTS, index=STATUS_OPTS.index(status_val) if status_val in STATUS_OPTS else 0, key=f"status_{name}")
+            status_input = a2.selectbox("Status", ["New","Reviewing","Waiting on Data","Pass","Advance"],
+                                        index=["New","Reviewing","Waiting on Data","Pass","Advance"].index(status_val) if status_val in ["New","Reviewing","Waiting on Data","Pass","Advance"] else 0,
+                                        key=f"status_{name}")
             st.session_state["status"][name] = status_input
 
             note_val = st.session_state["notes_map"].get(name, "")
