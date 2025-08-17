@@ -212,7 +212,7 @@ data = [
          intro_hint="Ask for gross volume under ledger and error rate improvements.",
          hiring_index=0.5, traffic_index=0.4, founder_signal=1),
     dict(company="OpenMesh", thesis="Open Data / Privacy Infra", stage="Seed",
-         total_raised=2_500_000, last_round="Seed (2025)",
+         total_raised=2,500,000, last_round="Seed (2025)",
          notable_investors=["Network Angels"],
          one_liner="Peer-to-peer data lake with verifiable lineage and access controls.",
          website="https://example.com/openmesh", sources=["https://example.com/openmesh/roadmap"],
@@ -300,6 +300,12 @@ STATUS_OPTS = ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"]
 # -----------------------------
 with st.sidebar:
     st.header("Filter")
+
+    # Reset sticky widget state, if needed
+    if st.button("Reset filters"):
+        st.session_state.clear()
+        st.experimental_rerun()
+
     include_late = st.checkbox("Include later-stage (Series B+)", value=False)
     guarantee_min = st.checkbox("Guarantee at least 5 cards (auto-expand)", value=True)
 
@@ -432,10 +438,100 @@ else:
             badges = [
                 f"**{name}**",
                 as_badge(r["thesis"]),
-                as_badge(r["stage"]),
+                as_badge(r()["stage"]) if callable(getattr(r, "__call__", None)) else as_badge(r["stage"]),  # safety if r becomes a callable row in some envs
                 as_badge(fmt_money(r["total_raised"])),
                 as_badge(f"Score {r['score']}")
             ]
             if r.get("_showcase_extra"):
                 badges.append(as_badge("Showcase extra"))
-            st.markd
+            st.markdown("  ".join(badges), unsafe_allow_html=True)
+
+            # One-liner
+            st.write(r["one_liner"])
+
+            # Key facts
+            c1, c2, c3, c4 = st.columns([3, 3, 3, 3])
+            c1.write(f"**Last round:** {r['last_round']}")
+            c2.write(f"**Website:** [{r['website']}]({r['website']})")
+            invs = ", ".join(r["notable_investors"]) if isinstance(r["notable_investors"], list) else "—"
+            c3.write(f"**Notable investors:** {invs if invs else '—'}")
+            c4.write(f"**Thesis:** {r['thesis']}")
+
+            # Score breakdown
+            with st.expander("Score breakdown"):
+                bd = r["_breakdown"]
+                st.write(
+                    f"- Recent funding: **{bd['recent_funding']}**"
+                    f"\n- Growth signal: **{bd['growth_signal']}**"
+                    f"\n- Thematic fit: **{bd['thematic_fit']}**"
+                    f"\n- Founder signal: **{bd['founder_signal']}**"
+                    f"\n\n**Total:** {r['score']}"
+                )
+
+            # Why USV / Why now
+            st.write(f"**Why USV:** {r['why_usv']}")
+            st.write(f"**Why now:** {r['why_now']}")
+
+            # Sources
+            if isinstance(r["sources"], list) and r["sources"]:
+                links = " · ".join([f"[source]({u})" for u in r["sources"]])
+                st.write(f"**Sources:** {links}")
+
+            # Assignment + Status + Deep link
+            a1, a2, a3, a4 = st.columns([2, 2, 3, 3])
+
+            owner_val = st.session_state["owners"].get(name, "")
+            st.session_state["owners"][name] = a1.text_input("Owner", value=owner_val, key=f"owner_{name}").strip()
+
+            status_val = st.session_state["status"].get(name, "New")
+            st.session_state["status"][name] = a2.selectbox(
+                "Status", STATUS_OPTS,
+                index=STATUS_OPTS.index(status_val) if status_val in STATUS_OPTS else 0,
+                key=f"status_{name}"
+            )
+
+            note_val = st.session_state["notes_map"].get(name, "")
+            st.session_state["notes_map"][name] = a3.text_input("Short note", value=note_val, key=f"note_{name}")
+
+            link = deep_link_to_copilot(name, r["website"])
+            if link:
+                a4.link_button("Open in DD Copilot", link, use_container_width=True)
+            else:
+                a4.caption("Set DDLITE_URL to enable Copilot deep link")
+
+            # Next action
+            ask = r.get("intro_hint") or "Ask for 3 customer references and latest traction metrics."
+            outreach = f"Hi — exploring {name} for USV’s thesis. Could you intro me to the team? {ask}"
+            st.write("**Next action:**")
+            st.code(outreach, language="text")
+
+# -----------------------------
+# Export
+# -----------------------------
+st.subheader("Export")
+export_cols = [
+    "company", "thesis", "stage", "total_raised", "last_round",
+    "notable_investors", "one_liner", "website", "sources", "why_usv", "why_now",
+    "score"
+]
+exp = view[export_cols].copy()
+exp["owner"] = exp["company"].apply(lambda n: st.session_state["owners"].get(n, ""))
+exp["status"] = exp["company"].apply(lambda n: st.session_state["status"].get(n, "New"))
+exp["note"]   = exp["company"].apply(lambda n: st.session_state["notes_map"].get(n, ""))
+
+csv = exp.to_csv(index=False)
+st.download_button("Download CSV", csv, "usv_deal_hotlist.csv", "text/csv", use_container_width=True)
+
+if EXCEL_ENGINE:
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine=EXCEL_ENGINE) as writer:
+        exp.to_excel(writer, index=False, sheet_name="Hotlist")
+    st.download_button(
+        f"Download Excel ({EXCEL_ENGINE})",
+        buf.getvalue(),
+        "usv_deal_hotlist.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+else:
+    st.info("Excel export unavailable: add `XlsxWriter` or `openpyxl` to requirements.txt. CSV export works above.")
