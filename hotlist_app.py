@@ -74,8 +74,12 @@ def canonical_domain(url_or_domain: str) -> str:
 
 def normalize_series_0_1(series: pd.Series) -> pd.Series:
     s = pd.to_numeric(series, errors="coerce").astype(float).fillna(0.0)
-    min_v = float(np.nanmin(s.values)) if np.isfinite(s.values).any() else 0.0
-    max_v = float(np.nanmax(s.values)) if np.isfinite(s.values).any() else 0.0
+    vals = s.values
+    finite_any = np.isfinite(vals).any()
+    if not finite_any:
+        return pd.Series([0.0] * len(s), index=s.index)
+    min_v = float(np.nanmin(vals))
+    max_v = float(np.nanmax(vals))
     if max_v <= min_v:
         return pd.Series([0.0] * len(s), index=s.index)
     return (s - min_v) / (max_v - min_v)
@@ -144,7 +148,6 @@ def deep_link_to_copilot(name: str, website: str) -> str | None:
 # Built-in dataset: 5 REAL Seed/Series A companies
 # -----------------------------
 data = [
-    # 1) Together AI — Series A (Mar 2024)
     dict(
         company="Together AI",
         thesis="AI / Machine Intelligence",
@@ -163,7 +166,6 @@ data = [
         intro_hint="Ask about enterprise GPU capacity SLAs, fine-tune economics vs proprietary clouds, and top customer references.",
         hiring_index=0.55, traffic_index=0.60, founder_signal=1
     ),
-    # 2) Modal Labs — Series A (Oct 2023)
     dict(
         company="Modal Labs",
         thesis="Developer Tools",
@@ -179,12 +181,11 @@ data = [
         intro_hint="Ask for customer case studies (GPU hours, cost deltas), SOC2 posture, and VPC/private networking roadmap.",
         hiring_index=0.45, traffic_index=0.50, founder_signal=1
     ),
-    # 3) Quilt — Series A (Apr 2024)
     dict(
         company="Quilt",
         thesis="Climate Tech",
         stage="Series A",
-        total_raised=42_000_000,  # $9M seed + $33M A
+        total_raised=42_000_000,  # $9M seed + $33M Series A
         last_round="Series A (Apr 2024)",
         notable_investors=["Energy Impact Partners", "Galvanize Climate Solutions", "Lowercarbon", "Gradient Ventures"],
         one_liner="Smart home heat pump system—hardware + app + installer network for electrified HVAC.",
@@ -198,7 +199,6 @@ data = [
         intro_hint="Ask about install throughput, CAC by channel, and grid/utility partnership pipeline.",
         hiring_index=0.40, traffic_index=0.35, founder_signal=0
     ),
-    # 4) Hippocratic AI — Series A (Mar 2024)
     dict(
         company="Hippocratic AI",
         thesis="Healthcare",
@@ -217,7 +217,6 @@ data = [
         intro_hint="Ask for live deployments by service line, clinical safety guardrails, and phase-three testing plan.",
         hiring_index=0.50, traffic_index=0.45, founder_signal=1
     ),
-    # 5) Privy — Series A (Nov 2023)
     dict(
         company="Privy",
         thesis="Open Internet / DeFi",
@@ -261,7 +260,11 @@ deduped_count = before - len(df)
 # Header
 # -----------------------------
 st.title("🔥 USV Deal Hotlist")
-st.subheader("Curated companies aligned with USV’s theses.")
+st.subheader("Seed & Series A–first, score-ranked shortlist for USV.")
+st.markdown(
+    "> **What this is:** A prioritized pipeline for quick sourcing and partner review.\n"
+    "> Assign owners, set status, and jump to DD Copilot for structured diligence."
+)
 st.caption("Dataset uses public information; replace or extend with your own list anytime.")
 if deduped_count > 0:
     st.caption(f"De-duplicated {deduped_count} by company.")
@@ -275,10 +278,12 @@ if "notes_map" not in st.session_state: st.session_state["notes_map"] = {}
 STATUS_OPTS = ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"]
 
 # -----------------------------
-# Filters (Seed & A default + Guarantee 5)
+# Filters (Seed & A default + Mode + Guarantee 5)
 # -----------------------------
 with st.sidebar:
     st.header("Filter")
+
+    mode = st.radio("Mode", ["Sourcing", "Partner meeting"], index=0, horizontal=True)
 
     # Reset sticky widget state, if needed
     if st.button("Reset filters"):
@@ -313,8 +318,16 @@ with st.sidebar:
     st.markdown("---")
     hide_pass = st.checkbox("Hide 'Pass' status", value=False)
 
+# Partner meeting intent: Seed/A only, tight top 5
+meeting_mode = (mode == "Partner meeting")
+if meeting_mode:
+    include_late = False
+    guarantee_min = True
+
 # Apply filters
-f = base.copy()
+f = df.copy()
+if not include_late:
+    f = f[f["stage_bucket"].isin(["Seed", "Series A"])]
 if pick_thesis != "All":
     f = f[f["thesis"] == pick_thesis]
 if pick_stage != "All":
@@ -379,6 +392,10 @@ else:
         view = view.sort_values(["_stage_order", "score"], ascending=[True, False], na_position="last")
     else:  # Highest score
         view = view.sort_values("score", ascending=False, na_position="last")
+
+# Meeting mode: compact top 5
+if meeting_mode:
+    view = view.head(5)
 
 # -----------------------------
 # Summary metrics
@@ -457,26 +474,33 @@ else:
                 st.write(f"**Sources:** {links}")
 
             # Assignment + Status + Deep link
-            a1, a2, a3, a4 = st.columns([2, 2, 3, 3])
-
-            owner_val = st.session_state["owners"].get(name, "")
-            st.session_state["owners"][name] = a1.text_input("Owner", value=owner_val, key=f"owner_{name}").strip()
-
-            status_val = st.session_state["status"].get(name, "New")
-            st.session_state["status"][name] = a2.selectbox(
-                "Status", STATUS_OPTS,
-                index=STATUS_OPTS.index(status_val) if status_val in STATUS_OPTS else 0,
-                key=f"status_{name}"
-            )
-
-            note_val = st.session_state["notes_map"].get(name, "")
-            st.session_state["notes_map"][name] = a3.text_input("Short note", value=note_val, key=f"note_{name}")
-
-            link = deep_link_to_copilot(name, r["website"])
-            if link:
-                a4.link_button("Open in DD Copilot", link, use_container_width=True)
+            if meeting_mode:
+                link = deep_link_to_copilot(name, r["website"])
+                if link:
+                    st.link_button("Open in DD Copilot", link, use_container_width=False)
+                else:
+                    st.caption("Set DDLITE_URL to enable Copilot deep link")
             else:
-                a4.caption("Set DDLITE_URL to enable Copilot deep link")
+                a1, a2, a3, a4 = st.columns([2, 2, 3, 3])
+
+                owner_val = st.session_state["owners"].get(name, "")
+                st.session_state["owners"][name] = a1.text_input("Owner", value=owner_val, key=f"owner_{name}").strip()
+
+                status_val = st.session_state["status"].get(name, "New")
+                st.session_state["status"][name] = a2.selectbox(
+                    "Status", STATUS_OPTS,
+                    index=STATUS_OPTS.index(status_val) if status_val in STATUS_OPTS else 0,
+                    key=f"status_{name}"
+                )
+
+                note_val = st.session_state["notes_map"].get(name, "")
+                st.session_state["notes_map"][name] = a3.text_input("Short note", value=note_val, key=f"note_{name}")
+
+                link = deep_link_to_copilot(name, r["website"])
+                if link:
+                    a4.link_button("Open in DD Copilot", link, use_container_width=True)
+                else:
+                    a4.caption("Set DDLITE_URL to enable Copilot deep link")
 
             # Next action
             ask = r.get("intro_hint") or "Ask for 3 customer references and latest traction metrics."
@@ -485,9 +509,9 @@ else:
             st.code(outreach, language="text")
 
 # -----------------------------
-# Export
+# Export (partner packet)
 # -----------------------------
-st.subheader("Export")
+st.subheader("Export (partner packet)")
 export_cols = [
     "company", "thesis", "stage", "total_raised", "last_round",
     "notable_investors", "one_liner", "website", "sources", "why_usv", "why_now",
