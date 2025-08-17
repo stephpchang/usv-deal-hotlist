@@ -307,7 +307,7 @@ deduped_count = dedupe_before - len(df)
 # Header / Value prop
 # -----------------------------
 st.title("🔥 USV Deal Hotlist")
-st.subheader("Curated companies aligned with USV’s theses — why they matter now and what to do next.")
+st.subheader("Curated companies aligned with USV’s theses")
 st.caption("Demo uses public information and curated notes. No proprietary data or paid APIs.")
 if deduped_count > 0:
     st.caption(f"De-duplicated {deduped_count} item(s) by domain/company.")
