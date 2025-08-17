@@ -22,9 +22,11 @@ WEIGHTS = {
     "thematic_fit": 0.25,     # 1 if thesis in focus_theses, else 0
     "founder_signal": 0.15,   # 1 if founder_signal truthy, else 0
 }
-THESES = ["AI / Machine Intelligence", "AI / Open Source", "Climate Tech", "Climate + Fintech",
-          "Developer Tools", "Fintech Infrastructure", "Open Data / Privacy Infra",
-          "Decentralized ID", "Open Internet / DeFi"]
+THESES = [
+    "AI / Machine Intelligence", "AI / Open Source", "Climate Tech", "Climate + Fintech",
+    "Developer Tools", "Fintech Infrastructure", "Open Data / Privacy Infra",
+    "Decentralized ID", "Open Internet / DeFi", "Healthcare"
+]
 DDLITE_URL = os.getenv("DDLITE_URL")  # e.g. http://localhost:8501 or your hosted Copilot
 
 # -----------------------------
@@ -139,11 +141,11 @@ def deep_link_to_copilot(name: str, website: str) -> str | None:
 
 # -----------------------------
 # Demo dataset
-# - Kept a couple of later-stage examples (for compare)
-# - Added 8 Seed/Series A demo entries so early-stage view shows ≥5
+# - 8 Seed/Series A demo entries
+# - A few later-stage retained for optional comparison (when B+ is enabled)
 # -----------------------------
 data = [
-    # --- Existing later-stage examples (still available if you toggle B+) ---
+    # --- Later-stage examples (only appear if you enable B+) ---
     dict(company="Hugging Face", thesis="AI / Open Source", stage="Series D / Growth",
          total_raised=235_000_000, last_round="Series D (2023)",
          notable_investors=["Sequoia", "Coatue", "Lux"],
@@ -163,7 +165,7 @@ data = [
          intro_hint="Ask about retention cohorts and enterprise/education use cases.",
          hiring_index=0.9, traffic_index=0.95, founder_signal=1),
 
-    # --- Seed / Series A (NEW demo entries; replace with real later) ---
+    # --- Seed / Series A (8 demo entries) ---
     dict(company="Oakleaf AI", thesis="AI / Machine Intelligence", stage="Seed",
          total_raised=3_200_000, last_round="Seed (2024)",
          notable_investors=["Demo Fund", "Angel Collective"],
@@ -314,7 +316,14 @@ with st.sidebar:
     st.markdown("---")
     focus_theses = st.multiselect("Focus theses (score boost)", THESES, default=[])
     min_score = st.slider("Min score", 0, 100, 0)
-    sort_by = st.selectbox("Sort by", ["Highest score", "Largest total raised", "Company A→Z", "Most recent round label"], index=0)
+    sort_opts = [
+        "Stage (Seed→A→B+) then score",
+        "Highest score",
+        "Largest total raised",
+        "Company A→Z",
+        "Most recent round label",
+    ]
+    sort_by = st.selectbox("Sort by", sort_opts, index=0)
 
     st.markdown("---")
     hide_pass = st.checkbox("Hide 'Pass' status", value=False)
@@ -337,38 +346,54 @@ if hide_pass:
     mask = f["company"].apply(lambda n: row_status(n) != "Pass")
     f = f[mask]
 
-# Score threshold
+# Apply min score to the main set
 f = f[f["score"] >= min_score]
 
-# Guarantee at least 5 cards
-def stage_order(bucket: str) -> int:
-    return {"Seed": 0, "Series A": 1, "Later (B+)": 2}.get(bucket, 9)
-
+# ---------- Guarantee at least 5 cards (respecting early-stage setting) ----------
 view = f.copy()
 if guarantee_min and len(view) < 5:
     pool = df.copy()
+    if not include_late:
+        pool = pool[pool["stage_bucket"].isin(["Seed", "Series A"])]
+    # Respect current filters for relevance (except min_score so we can actually fill to 5)
+    if pick_thesis != "All":
+        pool = pool[pool["thesis"] == pick_thesis]
+    if pick_stage != "All":
+        pool = pool[pool["stage"] == pick_stage]
+    pool = pool[pool["total_raised"].fillna(0) >= (min_amt * 1_000_000)]
     if hide_pass:
         pass_names = {n for n, s in st.session_state["status"].items() if s == "Pass"}
         pool = pool[~pool["company"].isin(pass_names)]
+    # Score & order the pool
     pool["score"] = pool.apply(lambda r: compute_score_row(r, focus_theses), axis=1)
     pool["_breakdown"] = pool.apply(lambda r: score_breakdown(r, focus_theses), axis=1)
     pool["_stage_order"] = pool["stage_bucket"].apply(stage_order)
     pool = pool[~pool["company"].isin(set(view["company"]))]
-    pool = pool.sort_values(["_stage_order", "score"], ascending=[True, False])
+    pool = pool.sort_values(["_stage_order", "score"], ascending=[True, False], na_position="last")
     extras_needed = 5 - len(view)
     extras = pool.head(extras_needed).copy()
     extras["_showcase_extra"] = True
     view = pd.concat([view, extras], ignore_index=True)
 
-# Sorting
-if sort_by == "Largest total raised":
-    view = view.sort_values("total_raised", ascending=False, na_position="last")
-elif sort_by == "Company A→Z":
-    view = view.sort_values("company", ascending=True)
-elif sort_by == "Most recent round label":
-    view = view.sort_values("last_round", ascending=False, na_position="last")
+# -----------------------------
+# Sorting for display
+# -----------------------------
+view["_stage_order"] = view["stage_bucket"].apply(stage_order)
+
+# If later-stage is excluded, force stage-first ordering regardless of dropdown
+if not include_late:
+    view = view.sort_values(["_stage_order", "score"], ascending=[True, False], na_position="last")
 else:
-    view = view.sort_values("score", ascending=False, na_position="last")
+    if sort_by == "Largest total raised":
+        view = view.sort_values("total_raised", ascending=False, na_position="last")
+    elif sort_by == "Company A→Z":
+        view = view.sort_values("company", ascending=True, na_position="last")
+    elif sort_by == "Most recent round label":
+        view = view.sort_values("last_round", ascending=False, na_position="last")
+    elif sort_by == "Stage (Seed→A→B+) then score":
+        view = view.sort_values(["_stage_order", "score"], ascending=[True, False], na_position="last")
+    else:  # Highest score
+        view = view.sort_values("score", ascending=False, na_position="last")
 
 # -----------------------------
 # Summary metrics
@@ -413,95 +438,4 @@ else:
             ]
             if r.get("_showcase_extra"):
                 badges.append(as_badge("Showcase extra"))
-            st.markdown("  ".join(badges), unsafe_allow_html=True)
-
-            # One-liner
-            st.write(r["one_liner"])
-
-            # Key facts
-            c1, c2, c3, c4 = st.columns([3, 3, 3, 3])
-            c1.write(f"**Last round:** {r['last_round']}")
-            c2.write(f"**Website:** [{r['website']}]({r['website']})")
-            invs = ", ".join(r["notable_investors"]) if isinstance(r["notable_investors"], list) else "—"
-            c3.write(f"**Notable investors:** {invs if invs else '—'}")
-            c4.write(f"**Thesis:** {r['thesis']}")
-
-            # Score breakdown
-            with st.expander("Score breakdown"):
-                bd = r["_breakdown"]
-                st.write(
-                    f"- Recent funding: **{bd['recent_funding']}**"
-                    f"\n- Growth signal: **{bd['growth_signal']}**"
-                    f"\n- Thematic fit: **{bd['thematic_fit']}**"
-                    f"\n- Founder signal: **{bd['founder_signal']}**"
-                    f"\n\n**Total:** {r['score']}"
-                )
-
-            # Why USV / Why now
-            st.write(f"**Why USV:** {r['why_usv']}")
-            st.write(f"**Why now:** {r['why_now']}")
-
-            # Sources
-            if isinstance(r["sources"], list) and r["sources"]:
-                links = " · ".join([f"[source]({u})" for u in r["sources"]])
-                st.write(f"**Sources:** {links}")
-
-            # Assignment + Status + Deep link
-            a1, a2, a3, a4 = st.columns([2, 2, 3, 3])
-
-            owner_val = st.session_state["owners"].get(name, "")
-            st.session_state["owners"][name] = a1.text_input("Owner", value=owner_val, key=f"owner_{name}").strip()
-
-            status_val = st.session_state["status"].get(name, "New")
-            st.session_state["status"][name] = a2.selectbox(
-                "Status", ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"],
-                index=["New", "Reviewing", "Waiting on Data", "Pass", "Advance"].index(status_val) if status_val in ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"] else 0,
-                key=f"status_{name}"
-            )
-
-            note_val = st.session_state["notes_map"].get(name, "")
-            st.session_state["notes_map"][name] = a3.text_input("Short note", value=note_val, key=f"note_{name}")
-
-            link = deep_link_to_copilot(name, r["website"])
-            if link:
-                a4.link_button("Open in DD Copilot", link, use_container_width=True)
-            else:
-                a4.caption("Set DDLITE_URL to enable Copilot deep link")
-
-            # Next action
-            ask = r.get("intro_hint") or "Ask for 3 customer references and latest traction metrics."
-            outreach = f"Hi — exploring {name} for USV’s thesis. Could you intro me to the team? {ask}"
-            st.write("**Next action:**")
-            st.code(outreach, language="text")
-
-# -----------------------------
-# Export
-# -----------------------------
-st.subheader("Export")
-export_cols = [
-    "company", "thesis", "stage", "total_raised", "last_round",
-    "notable_investors", "one_liner", "website", "sources", "why_usv", "why_now",
-    "score"
-]
-exp = view[export_cols].copy()
-exp["owner"] = exp["company"].apply(lambda n: st.session_state["owners"].get(n, ""))
-exp["status"] = exp["company"].apply(lambda n: st.session_state["status"].get(n, "New"))
-exp["note"]   = exp["company"].apply(lambda n: st.session_state["notes_map"].get(n, ""))
-
-csv = exp.to_csv(index=False)
-st.download_button("Download CSV", csv, "usv_deal_hotlist.csv", "text/csv", use_container_width=True)
-
-EXCEL_ENGINE = pick_excel_engine()
-if EXCEL_ENGINE:
-    buf = BytesIO()
-    with pd.ExcelWriter(buf, engine=EXCEL_ENGINE) as writer:
-        exp.to_excel(writer, index=False, sheet_name="Hotlist")
-    st.download_button(
-        f"Download Excel ({EXCEL_ENGINE})",
-        buf.getvalue(),
-        "usv_deal_hotlist.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-else:
-    st.info("Excel export unavailable: add `XlsxWriter` or `openpyxl` to requirements.txt. CSV export works above.")
+            st.markd
