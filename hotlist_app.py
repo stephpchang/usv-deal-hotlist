@@ -212,7 +212,7 @@ data = [
          intro_hint="Ask for gross volume under ledger and error rate improvements.",
          hiring_index=0.5, traffic_index=0.4, founder_signal=1),
     dict(company="OpenMesh", thesis="Open Data / Privacy Infra", stage="Seed",
-         total_raised=2,500,000, last_round="Seed (2025)",
+         total_raised=2_500_000, last_round="Seed (2025)",  # NOTE: underscore, not commas
          notable_investors=["Network Angels"],
          one_liner="Peer-to-peer data lake with verifiable lineage and access controls.",
          website="https://example.com/openmesh", sources=["https://example.com/openmesh/roadmap"],
@@ -438,7 +438,7 @@ else:
             badges = [
                 f"**{name}**",
                 as_badge(r["thesis"]),
-                as_badge(r()["stage"]) if callable(getattr(r, "__call__", None)) else as_badge(r["stage"]),  # safety if r becomes a callable row in some envs
+                as_badge(r["stage"]),
                 as_badge(fmt_money(r["total_raised"])),
                 as_badge(f"Score {r['score']}")
             ]
