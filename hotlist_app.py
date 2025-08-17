@@ -1,6 +1,6 @@
 # hotlist_app.py
 import os
-from urllib.parse import urlparse, urlencode
+from urllib.parse import urlencode, urlparse
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -132,12 +132,13 @@ def score_breakdown(row: pd.Series, focus_theses: list[str]) -> dict:
     }
 
 def deep_link_to_copilot(name: str, website: str) -> str | None:
-    if not DDLITE_URL:
+    base = DDLITE_URL
+    if not base:
         return None
     q = {}
     if name: q["company"] = name
     if website: q["website"] = website
-    return f"{DDLITE_URL}?{urlencode(q)}" if q else DDLITE_URL
+    return f"{base}?{urlencode(q)}" if q else base
 
 # -----------------------------
 # Demo dataset
@@ -170,7 +171,7 @@ data = [
          total_raised=3_200_000, last_round="Seed (2024)",
          notable_investors=["Demo Fund", "Angel Collective"],
          one_liner="Agents that triage L1 support tickets and hand off cleanly to humans.",
-         website="https://example.com/oakleaf-ai", sources=["https://example.com/oakleaf-ai/press"],
+         website="https://oakleaf-ai.example", sources=["https://oakleaf-ai.example/press"],
          why_usv="Automation loop in daily workflows; measurable time-to-resolution impact.",
          why_now="Agent frameworks stabilizing; early design partners showing strong ROI.",
          intro_hint="Ask for pilot KPIs (deflections, CSAT) and security review status.",
@@ -179,7 +180,7 @@ data = [
          total_raised=5_000_000, last_round="Seed (2025)",
          notable_investors=["Earth Capital", "Seed Climate"],
          one_liner="API for distributed energy resource telemetry & dispatch for installers.",
-         website="https://example.com/helio-grid", sources=["https://example.com/helio-grid/blog"],
+         website="https://heliogrid.example", sources=["https://heliogrid.example/blog"],
          why_usv="Electrification infra; wedge via installers and utilities integrations.",
          why_now="DER incentives + hardware attach driving data interoperability demand.",
          intro_hint="Ask about utility integrations and paid pilots by region.",
@@ -188,7 +189,7 @@ data = [
          total_raised=12_000_000, last_round="Series A (2025)",
          notable_investors=["CodeSeed", "Operator Ventures"],
          one_liner="Preview environments-as-a-service for every PR, with ephemeral databases.",
-         website="https://example.com/parcellabs", sources=["https://example.com/parcellabs/changelog"],
+         website="https://parcellabs.example", sources=["https://parcellabs.example/changelog"],
          why_usv="Core dev loop; expands into test data mgmt and compliance snapshots.",
          why_now="Shift-left testing and platform teams standardizing on preview infra.",
          intro_hint="Ask for DORA metrics impact and enterprise POCs.",
@@ -197,7 +198,7 @@ data = [
          total_raised=4_800_000, last_round="Seed (2024)",
          notable_investors=["Open Identity Fund"],
          one_liner="Privacy-preserving identity assertions for apps, no PII exchange.",
-         website="https://example.com/glacierid", sources=["https://example.com/glacierid/whitepaper"],
+         website="https://glacierid.example", sources=["https://glacierid.example/whitepaper"],
          why_usv="Open internet identity rails; unlocks spam resistance and fair drops.",
          why_now="Policy pressure + wallet adoption; developers want SDKs not protocols.",
          intro_hint="Ask for developer SDK adoption and validator distribution.",
@@ -206,16 +207,16 @@ data = [
          total_raised=10_000_000, last_round="Series A (2024)",
          notable_investors=["Rails Capital"],
          one_liner="Ledger & reconciliation APIs for marketplaces and B2B platforms.",
-         website="https://example.com/riverbed", sources=["https://example.com/riverbed/docs"],
+         website="https://riverbed.example", sources=["https://riverbed.example/docs"],
          why_usv="Financial backbones of platforms; expansion into risk & payments ops.",
          why_now="Marketplaces proliferating; CFO stacks consolidating around APIs.",
          intro_hint="Ask for gross volume under ledger and error rate improvements.",
          hiring_index=0.5, traffic_index=0.4, founder_signal=1),
     dict(company="OpenMesh", thesis="Open Data / Privacy Infra", stage="Seed",
-         total_raised=2_500_000, last_round="Seed (2025)",  # NOTE: underscore, not commas
+         total_raised=2_500_000, last_round="Seed (2025)",
          notable_investors=["Network Angels"],
          one_liner="Peer-to-peer data lake with verifiable lineage and access controls.",
-         website="https://example.com/openmesh", sources=["https://example.com/openmesh/roadmap"],
+         website="https://openmesh.example", sources=["https://openmesh.example/roadmap"],
          why_usv="User-owned data primitives; composable building blocks for apps.",
          why_now="AI data provenance demands verifiable pipelines; open infra emerging.",
          intro_hint="Ask for early ecosystem apps and data provider incentives.",
@@ -224,7 +225,7 @@ data = [
          total_raised=9_000_000, last_round="Series A (2025)",
          notable_investors=["Health Seed", "City Angels"],
          one_liner="Care navigation co-pilot for FQHCs; integrates scheduling & referrals.",
-         website="https://example.com/commons-health", sources=["https://example.com/commons-health/case-study"],
+         website="https://commons-health.example", sources=["https://commons-health.example/case-study"],
          why_usv="Civic networks + software; expands to claims and community orgs.",
          why_now="FQHCs digitizing; reimbursement rules encourage navigation tooling.",
          intro_hint="Ask for signed LOIs, rollout speed, and payer integrations.",
@@ -233,7 +234,7 @@ data = [
          total_raised=3_800_000, last_round="Seed (2025)",
          notable_investors=["OSS Capital (demo)"],
          one_liner="Open-source agent runtime with guardrails and skills marketplace.",
-         website="https://example.com/nimbus-agent", sources=["https://example.com/nimbus-agent/github"],
+         website="https://nimbus-agent.example", sources=["https://nimbus-agent.example/github"],
          why_usv="Developer ecosystems & open networks; compounding via community.",
          why_now="Agent stacks consolidating; need safe, modular runtimes.",
          intro_hint="Ask for GitHub stars-to-active conversions and paid support pipeline.",
@@ -262,7 +263,7 @@ data = [
 df = pd.DataFrame(data)
 
 # -----------------------------
-# Derived fields: domain, funding normalization, stage bucket
+# Derived fields: funding normalization, stage bucket
 # -----------------------------
 df["domain"] = df["website"].apply(canonical_domain)
 df["recent_funding_usd"] = df.get("recent_funding_usd", pd.Series([np.nan]*len(df)))
@@ -271,12 +272,11 @@ df["recent_funding_usd_norm"] = normalize_series_0_1(df["recent_funding_usd"].fi
 df["stage_bucket"] = df["stage"].apply(stage_bucket)
 
 # -----------------------------
-# De-duplication
+# De-duplication (company ONLY — do NOT collapse by domain)
 # -----------------------------
-dedupe_before = len(df)
-df = df.sort_values(["company"]).drop_duplicates(subset=["domain"], keep="first")
-df = df.drop_duplicates(subset=["company"], keep="first")
-deduped_count = dedupe_before - len(df)
+before = len(df)
+df = df.sort_values(["company"]).drop_duplicates(subset=["company"], keep="first")
+deduped_count = before - len(df)
 
 # -----------------------------
 # Header
@@ -285,7 +285,7 @@ st.title("🔥 USV Deal Hotlist")
 st.subheader("Curated companies aligned with USV’s theses.")
 st.caption("Demo uses sample entries and curated notes. Replace with real deals as needed.")
 if deduped_count > 0:
-    st.caption(f"De-duplicated {deduped_count} item(s) by domain/company.")
+    st.caption(f"De-duplicated {deduped_count} by company.")
 
 # -----------------------------
 # Session state for assignments & status
@@ -355,13 +355,12 @@ if hide_pass:
 # Apply min score to the main set
 f = f[f["score"] >= min_score]
 
-# ---------- Guarantee at least 5 cards (respecting early-stage setting) ----------
+# ---------- Guarantee at least 5 cards (respect early-stage + filters) ----------
 view = f.copy()
 if guarantee_min and len(view) < 5:
     pool = df.copy()
     if not include_late:
         pool = pool[pool["stage_bucket"].isin(["Seed", "Series A"])]
-    # Respect current filters for relevance (except min_score so we can actually fill to 5)
     if pick_thesis != "All":
         pool = pool[pool["thesis"] == pick_thesis]
     if pick_stage != "All":
@@ -370,12 +369,13 @@ if guarantee_min and len(view) < 5:
     if hide_pass:
         pass_names = {n for n, s in st.session_state["status"].items() if s == "Pass"}
         pool = pool[~pool["company"].isin(pass_names)]
-    # Score & order the pool
+
     pool["score"] = pool.apply(lambda r: compute_score_row(r, focus_theses), axis=1)
     pool["_breakdown"] = pool.apply(lambda r: score_breakdown(r, focus_theses), axis=1)
     pool["_stage_order"] = pool["stage_bucket"].apply(stage_order)
     pool = pool[~pool["company"].isin(set(view["company"]))]
     pool = pool.sort_values(["_stage_order", "score"], ascending=[True, False], na_position="last")
+
     extras_needed = 5 - len(view)
     extras = pool.head(extras_needed).copy()
     extras["_showcase_extra"] = True
