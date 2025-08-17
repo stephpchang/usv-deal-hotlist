@@ -80,17 +80,17 @@ def normalize_series_0_1(series: pd.Series) -> pd.Series:
 
 def stage_bucket(stage_text: str) -> str:
     """Map raw stage text to simple buckets for filtering."""
-    s = (stage_text or "").lower()
-    s = s.replace("-", " ")
-    # order matters: check specific phrases first
+    s = (stage_text or "").lower().replace("-", " ")
     if "pre seed" in s or "preseed" in s:
         return "Seed"
     if "series a" in s:
         return "Series A"
     if "seed" in s:
         return "Seed"
-    # everything else = later-stage
     return "Later (B+)"
+
+def stage_order(bucket: str) -> int:
+    return {"Seed": 0, "Series A": 1, "Later (B+)": 2}.get(bucket, 9)
 
 def compute_score_row(row: pd.Series, focus_theses: list[str]) -> float:
     funding = float(row.get("recent_funding_usd_norm") or 0.0)  # 0..1
@@ -138,166 +138,129 @@ def deep_link_to_copilot(name: str, website: str) -> str | None:
     return f"{DDLITE_URL}?{urlencode(q)}" if q else DDLITE_URL
 
 # -----------------------------
-# Curated demo dataset (same as before; stages will be bucketed)
-# Optional scoring fields you can add later: recent_funding_usd, hiring_index, traffic_index, founder_signal
+# Demo dataset
+# - Kept a couple of later-stage examples (for compare)
+# - Added 8 Seed/Series A demo entries so early-stage view shows ≥5
 # -----------------------------
 data = [
-    dict(
-        company="Watershed",
-        thesis="Climate Tech",
-        stage="Series B / Growth",
-        total_raised=83_000_000,
-        last_round="Series B (2022)",
-        notable_investors=["Sequoia", "Kleiner Perkins"],
-        one_liner="Carbon accounting & reduction platform to help enterprises hit net-zero targets.",
-        website="https://www.watershed.com/",
-        sources=["https://www.watershed.com/blog", "https://techcrunch.com/"],
-        why_usv="Core to climate mitigation; strong enterprise wedge with regulatory tailwinds.",
-        why_now="Enterprises racing to meet reporting standards; expanding categories beyond accounting.",
-        intro_hint="Ask for 3 enterprise customer references and time-to-implementation metrics.",
-        hiring_index=0.6, traffic_index=0.7, founder_signal=1
-    ),
-    dict(
-        company="Span.io",
-        thesis="Climate Tech",
-        stage="Series C / Growth",
-        total_raised=231_000_000,
-        last_round="Series C (2023)",
-        notable_investors=["Coatue", "Congruent"],
-        one_liner="Smart electrical panels that orchestrate home energy (solar, EV, batteries).",
-        website="https://www.span.io/",
-        sources=["https://www.span.io/blog", "https://www.businesswire.com/"],
-        why_usv="Hardware + software layer at the home edge; potential network effects across devices.",
-        why_now="Electrification wave + DER incentives; panel as control point is gaining adoption.",
-        intro_hint="Ask about install velocity, partners, and attach rates for EV/solar/batteries.",
-        hiring_index=0.5, traffic_index=0.55, founder_signal=0
-    ),
-    dict(
-        company="Perplexity AI",
-        thesis="AI / Machine Intelligence",
-        stage="Series B / Growth",
-        total_raised=165_000_000,
-        last_round="Series B (2024)",
-        notable_investors=["IVP", "NEA", "Jeff Bezos"],
-        one_liner="AI-powered conversational search with cited answers across the live web.",
-        website="https://www.perplexity.ai/",
-        sources=["https://www.reuters.com/technology/"],
-        why_usv="Aligns with 'open internet' & machine intelligence; strong engagement loops.",
-        why_now="Exploding daily usage; moving from consumer curiosity to daily workflow.",
-        intro_hint="Ask about retention cohorts and enterprise/education use cases.",
-        hiring_index=0.9, traffic_index=0.95, founder_signal=1
-    ),
-    dict(
-        company="Hugging Face",
-        thesis="AI / Open Source",
-        stage="Series D / Growth",
-        total_raised=235_000_000,
-        last_round="Series D (2023)",
-        notable_investors=["Sequoia", "Coatue", "Lux"],
-        one_liner="Open-source hub for models, datasets, & tooling; the GitHub of AI.",
-        website="https://huggingface.co/",
-        sources=["https://huggingface.co/blog"],
-        why_usv="Open networks & developer ecosystems; durable community moat.",
-        why_now="Model hosting/inference partnerships expanding; developer pull remains strong.",
-        intro_hint="Ask about paid usage mix, enterprise plans, and ecosystem monetization.",
-        hiring_index=0.75, traffic_index=0.85, founder_signal=1
-    ),
-    dict(
-        company="Warp",
-        thesis="Developer Tools",
-        stage="Series B / Growth",
-        total_raised=73_000_000,
-        last_round="Series B (2023)",
-        notable_investors=["GV", "Dylan Field"],
-        one_liner="Modern terminal with AI assist and multiplayer collaboration.",
-        website="https://www.warp.dev/",
-        sources=["https://www.warp.dev/blog"],
-        why_usv="Developer productivity + network effects; wedge into daily workflows.",
-        why_now="AI-native commands and team features are accelerating adoption.",
-        intro_hint="Ask for active team usage, command share rates, and AI resolution metrics.",
-        hiring_index=0.55, traffic_index=0.6, founder_signal=0
-    ),
-    dict(
-        company="Teller",
-        thesis="Fintech Infrastructure",
-        stage="Seed / Early",
-        total_raised=6_000_000,
-        last_round="Seed (2022)",
-        notable_investors=["Lightspeed", "SciFi VC"],
-        one_liner="API platform for secure access to U.S. bank data—no screen scraping.",
-        website="https://www.teller.io/",
-        sources=["https://teller.io/blog"],
-        why_usv="Open finance rails; cleaner data access for consumer/SMB fintech.",
-        why_now="Banks tightening; developers want direct, reliable data integrations.",
-        intro_hint="Ask about bank coverage, latency/reliability SLOs, and top fintech adopters.",
-        hiring_index=0.25, traffic_index=0.3, founder_signal=0
-    ),
-    dict(
-        company="Plaid Climate",
-        thesis="Climate + Fintech",
-        stage="Spin-out / Early",
-        total_raised=None,
-        last_round="—",
-        notable_investors=["Plaid (parent)"],
-        one_liner="Sustainability tools layered on transaction data for climate impact tracking.",
-        website="https://plaid.com/",
-        sources=["https://plaid.com/blog/"],
-        why_usv="Intersection of open finance and climate; unique data signal for impact reporting.",
-        why_now="Banks/fintechs under pressure to offer climate reporting to consumers/SMBs.",
-        intro_hint="Ask about pilot partners and accuracy of emissions estimation models.",
-        hiring_index=0.3, traffic_index=0.4, founder_signal=0
-    ),
-    dict(
-        company="Aleo",
-        thesis="Open Data / Privacy Infra",
-        stage="Series B / Growth",
-        total_raised=298_000_000,
-        last_round="Series B (2022)",
-        notable_investors=["a16z", "SoftBank"],
-        one_liner="Zero-knowledge blockchain enabling private applications with on-chain verification.",
-        website="https://www.aleo.org/",
-        sources=["https://www.aleo.org/blog"],
-        why_usv="Privacy-preserving apps for the open internet; crypto rails for agents.",
-        why_now="ZK tooling maturing; developers shipping beyond POCs.",
-        intro_hint="Ask about top dev projects, TVL, and onchain activity growth.",
-        hiring_index=0.45, traffic_index=0.5, founder_signal=0
-    ),
-    dict(
-        company="Worldcoin",
-        thesis="Decentralized ID",
-        stage="Series C / Growth",
-        total_raised=250_000_000,
-        last_round="Series C (2023)",
-        notable_investors=["a16z", "Bain Capital Crypto"],
-        one_liner="Global proof-of-personhood protocol aiming to enable equitable digital identity.",
-        website="https://worldcoin.org/",
-        sources=["https://worldcoin.org/blog"],
-        why_usv="Identity for open internet & agents; unlocks fair airdrops and spam resistance.",
-        why_now="Expanding verification; policy debates drive relevance and adoption questions.",
-        intro_hint="Ask for verified user growth by geography and active developer integrations.",
-        hiring_index=0.4, traffic_index=0.55, founder_signal=0
-    ),
-    dict(
-        company="Uniswap Labs",
-        thesis="Open Internet / DeFi",
-        stage="Series B / Growth",
-        total_raised=176_000_000,
-        last_round="Series B (2022)",
-        notable_investors=["a16z", "Paradigm"],
-        one_liner="Leading decentralized exchange protocol—open, programmable liquidity.",
-        website="https://uniswap.org/",
-        sources=["https://blog.uniswap.org/"],
-        why_usv="Open financial infrastructure; network effects & protocol-driven moats.",
-        why_now="Onchain activity cycling up; L2 expansion and new product surfaces.",
-        intro_hint="Ask about L2 share, fee capture vs protocol, and ecosystem apps growth.",
-        hiring_index=0.35, traffic_index=0.6, founder_signal=1
-    ),
+    # --- Existing later-stage examples (still available if you toggle B+) ---
+    dict(company="Hugging Face", thesis="AI / Open Source", stage="Series D / Growth",
+         total_raised=235_000_000, last_round="Series D (2023)",
+         notable_investors=["Sequoia", "Coatue", "Lux"],
+         one_liner="Open-source hub for models, datasets, & tooling; the GitHub of AI.",
+         website="https://huggingface.co/", sources=["https://huggingface.co/blog"],
+         why_usv="Open networks & developer ecosystems; durable community moat.",
+         why_now="Model hosting/inference partnerships expanding; developer pull remains strong.",
+         intro_hint="Ask about paid usage mix, enterprise plans, and ecosystem monetization.",
+         hiring_index=0.75, traffic_index=0.85, founder_signal=1),
+    dict(company="Perplexity AI", thesis="AI / Machine Intelligence", stage="Series B / Growth",
+         total_raised=165_000_000, last_round="Series B (2024)",
+         notable_investors=["IVP", "NEA", "Jeff Bezos"],
+         one_liner="AI-powered conversational search with cited answers across the live web.",
+         website="https://www.perplexity.ai/", sources=["https://www.reuters.com/technology/"],
+         why_usv="Aligns with 'open internet' & machine intelligence; strong engagement loops.",
+         why_now="Exploding daily usage; moving from consumer curiosity to daily workflow.",
+         intro_hint="Ask about retention cohorts and enterprise/education use cases.",
+         hiring_index=0.9, traffic_index=0.95, founder_signal=1),
+
+    # --- Seed / Series A (NEW demo entries; replace with real later) ---
+    dict(company="Oakleaf AI", thesis="AI / Machine Intelligence", stage="Seed",
+         total_raised=3_200_000, last_round="Seed (2024)",
+         notable_investors=["Demo Fund", "Angel Collective"],
+         one_liner="Agents that triage L1 support tickets and hand off cleanly to humans.",
+         website="https://example.com/oakleaf-ai", sources=["https://example.com/oakleaf-ai/press"],
+         why_usv="Automation loop in daily workflows; measurable time-to-resolution impact.",
+         why_now="Agent frameworks stabilizing; early design partners showing strong ROI.",
+         intro_hint="Ask for pilot KPIs (deflections, CSAT) and security review status.",
+         hiring_index=0.35, traffic_index=0.3, founder_signal=1),
+    dict(company="Helio Grid", thesis="Climate Tech", stage="Seed",
+         total_raised=5_000_000, last_round="Seed (2025)",
+         notable_investors=["Earth Capital", "Seed Climate"],
+         one_liner="API for distributed energy resource telemetry & dispatch for installers.",
+         website="https://example.com/helio-grid", sources=["https://example.com/helio-grid/blog"],
+         why_usv="Electrification infra; wedge via installers and utilities integrations.",
+         why_now="DER incentives + hardware attach driving data interoperability demand.",
+         intro_hint="Ask about utility integrations and paid pilots by region.",
+         hiring_index=0.4, traffic_index=0.35, founder_signal=0),
+    dict(company="Parcel Labs", thesis="Developer Tools", stage="Series A",
+         total_raised=12_000_000, last_round="Series A (2025)",
+         notable_investors=["CodeSeed", "Operator Ventures"],
+         one_liner="Preview environments-as-a-service for every PR, with ephemeral databases.",
+         website="https://example.com/parcellabs", sources=["https://example.com/parcellabs/changelog"],
+         why_usv="Core dev loop; expands into test data mgmt and compliance snapshots.",
+         why_now="Shift-left testing and platform teams standardizing on preview infra.",
+         intro_hint="Ask for DORA metrics impact and enterprise POCs.",
+         hiring_index=0.55, traffic_index=0.45, founder_signal=1),
+    dict(company="GlacierID", thesis="Decentralized ID", stage="Seed",
+         total_raised=4_800_000, last_round="Seed (2024)",
+         notable_investors=["Open Identity Fund"],
+         one_liner="Privacy-preserving identity assertions for apps, no PII exchange.",
+         website="https://example.com/glacierid", sources=["https://example.com/glacierid/whitepaper"],
+         why_usv="Open internet identity rails; unlocks spam resistance and fair drops.",
+         why_now="Policy pressure + wallet adoption; developers want SDKs not protocols.",
+         intro_hint="Ask for developer SDK adoption and validator distribution.",
+         hiring_index=0.3, traffic_index=0.25, founder_signal=0),
+    dict(company="Riverbed Finance", thesis="Fintech Infrastructure", stage="Series A",
+         total_raised=10_000_000, last_round="Series A (2024)",
+         notable_investors=["Rails Capital"],
+         one_liner="Ledger & reconciliation APIs for marketplaces and B2B platforms.",
+         website="https://example.com/riverbed", sources=["https://example.com/riverbed/docs"],
+         why_usv="Financial backbones of platforms; expansion into risk & payments ops.",
+         why_now="Marketplaces proliferating; CFO stacks consolidating around APIs.",
+         intro_hint="Ask for gross volume under ledger and error rate improvements.",
+         hiring_index=0.5, traffic_index=0.4, founder_signal=1),
+    dict(company="OpenMesh", thesis="Open Data / Privacy Infra", stage="Seed",
+         total_raised=2_500_000, last_round="Seed (2025)",
+         notable_investors=["Network Angels"],
+         one_liner="Peer-to-peer data lake with verifiable lineage and access controls.",
+         website="https://example.com/openmesh", sources=["https://example.com/openmesh/roadmap"],
+         why_usv="User-owned data primitives; composable building blocks for apps.",
+         why_now="AI data provenance demands verifiable pipelines; open infra emerging.",
+         intro_hint="Ask for early ecosystem apps and data provider incentives.",
+         hiring_index=0.28, traffic_index=0.22, founder_signal=0),
+    dict(company="Commons Health OS", thesis="Healthcare", stage="Series A",
+         total_raised=9_000_000, last_round="Series A (2025)",
+         notable_investors=["Health Seed", "City Angels"],
+         one_liner="Care navigation co-pilot for FQHCs; integrates scheduling & referrals.",
+         website="https://example.com/commons-health", sources=["https://example.com/commons-health/case-study"],
+         why_usv="Civic networks + software; expands to claims and community orgs.",
+         why_now="FQHCs digitizing; reimbursement rules encourage navigation tooling.",
+         intro_hint="Ask for signed LOIs, rollout speed, and payer integrations.",
+         hiring_index=0.4, traffic_index=0.3, founder_signal=1),
+    dict(company="Nimbus Agent", thesis="AI / Open Source", stage="Seed",
+         total_raised=3_800_000, last_round="Seed (2025)",
+         notable_investors=["OSS Capital (demo)"],
+         one_liner="Open-source agent runtime with guardrails and skills marketplace.",
+         website="https://example.com/nimbus-agent", sources=["https://example.com/nimbus-agent/github"],
+         why_usv="Developer ecosystems & open networks; compounding via community.",
+         why_now="Agent stacks consolidating; need safe, modular runtimes.",
+         intro_hint="Ask for GitHub stars-to-active conversions and paid support pipeline.",
+         hiring_index=0.45, traffic_index=0.33, founder_signal=1),
+
+    # --- Original early entries kept ---
+    dict(company="Teller", thesis="Fintech Infrastructure", stage="Seed / Early",
+         total_raised=6_000_000, last_round="Seed (2022)",
+         notable_investors=["Lightspeed", "SciFi VC"],
+         one_liner="API platform for secure access to U.S. bank data—no screen scraping.",
+         website="https://www.teller.io/", sources=["https://teller.io/blog"],
+         why_usv="Open finance rails; cleaner data access for consumer/SMB fintech.",
+         why_now="Banks tightening; developers want direct, reliable data integrations.",
+         intro_hint="Ask about bank coverage, latency/reliability SLOs, and top fintech adopters.",
+         hiring_index=0.25, traffic_index=0.3, founder_signal=0),
+    dict(company="Plaid Climate", thesis="Climate + Fintech", stage="Spin-out / Early",
+         total_raised=None, last_round="—", notable_investors=["Plaid (parent)"],
+         one_liner="Sustainability tools layered on transaction data for climate impact tracking.",
+         website="https://plaid.com/", sources=["https://plaid.com/blog/"],
+         why_usv="Intersection of open finance and climate; unique data signal for impact reporting.",
+         why_now="Banks/fintechs under pressure to offer climate reporting to consumers/SMBs.",
+         intro_hint="Ask about pilot partners and accuracy of emissions estimation models.",
+         hiring_index=0.3, traffic_index=0.4, founder_signal=0),
 ]
 
 df = pd.DataFrame(data)
 
 # -----------------------------
-# Derived fields: domain, funding normalization, stage bucket, score proxy
+# Derived fields: domain, funding normalization, stage bucket
 # -----------------------------
 df["domain"] = df["website"].apply(canonical_domain)
 df["recent_funding_usd"] = df.get("recent_funding_usd", pd.Series([np.nan]*len(df)))
@@ -306,7 +269,7 @@ df["recent_funding_usd_norm"] = normalize_series_0_1(df["recent_funding_usd"].fi
 df["stage_bucket"] = df["stage"].apply(stage_bucket)
 
 # -----------------------------
-# Simple de-duplication (domain or company)
+# De-duplication
 # -----------------------------
 dedupe_before = len(df)
 df = df.sort_values(["company"]).drop_duplicates(subset=["domain"], keep="first")
@@ -314,11 +277,11 @@ df = df.drop_duplicates(subset=["company"], keep="first")
 deduped_count = dedupe_before - len(df)
 
 # -----------------------------
-# Header / Value prop
+# Header
 # -----------------------------
 st.title("🔥 USV Deal Hotlist")
 st.subheader("Curated companies aligned with USV’s theses.")
-st.caption("Demo uses public information and curated notes. No proprietary data or paid APIs.")
+st.caption("Demo uses sample entries and curated notes. Replace with real deals as needed.")
 if deduped_count > 0:
     st.caption(f"De-duplicated {deduped_count} item(s) by domain/company.")
 
@@ -331,11 +294,12 @@ if "notes_map" not in st.session_state: st.session_state["notes_map"] = {}
 STATUS_OPTS = ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"]
 
 # -----------------------------
-# Filters (Seed & A enforced by default)
+# Filters (Seed & A default + Guarantee 5)
 # -----------------------------
 with st.sidebar:
     st.header("Filter")
     include_late = st.checkbox("Include later-stage (Series B+)", value=False)
+    guarantee_min = st.checkbox("Guarantee at least 5 cards (auto-expand)", value=True)
 
     base = df.copy()
     if not include_late:
@@ -363,7 +327,7 @@ if pick_stage != "All":
     f = f[f["stage"] == pick_stage]
 f = f[f["total_raised"].fillna(0) >= (min_amt * 1_000_000)]
 
-# Compute scores on the filtered subset
+# Compute scores
 f["score"] = f.apply(lambda r: compute_score_row(r, focus_theses), axis=1)
 f["_breakdown"] = f.apply(lambda r: score_breakdown(r, focus_theses), axis=1)
 
@@ -376,23 +340,43 @@ if hide_pass:
 # Score threshold
 f = f[f["score"] >= min_score]
 
+# Guarantee at least 5 cards
+def stage_order(bucket: str) -> int:
+    return {"Seed": 0, "Series A": 1, "Later (B+)": 2}.get(bucket, 9)
+
+view = f.copy()
+if guarantee_min and len(view) < 5:
+    pool = df.copy()
+    if hide_pass:
+        pass_names = {n for n, s in st.session_state["status"].items() if s == "Pass"}
+        pool = pool[~pool["company"].isin(pass_names)]
+    pool["score"] = pool.apply(lambda r: compute_score_row(r, focus_theses), axis=1)
+    pool["_breakdown"] = pool.apply(lambda r: score_breakdown(r, focus_theses), axis=1)
+    pool["_stage_order"] = pool["stage_bucket"].apply(stage_order)
+    pool = pool[~pool["company"].isin(set(view["company"]))]
+    pool = pool.sort_values(["_stage_order", "score"], ascending=[True, False])
+    extras_needed = 5 - len(view)
+    extras = pool.head(extras_needed).copy()
+    extras["_showcase_extra"] = True
+    view = pd.concat([view, extras], ignore_index=True)
+
 # Sorting
 if sort_by == "Largest total raised":
-    f = f.sort_values("total_raised", ascending=False, na_position="last")
+    view = view.sort_values("total_raised", ascending=False, na_position="last")
 elif sort_by == "Company A→Z":
-    f = f.sort_values("company", ascending=True)
+    view = view.sort_values("company", ascending=True)
 elif sort_by == "Most recent round label":
-    f = f.sort_values("last_round", ascending=False, na_position="last")
+    view = view.sort_values("last_round", ascending=False, na_position="last")
 else:
-    f = f.sort_values("score", ascending=False, na_position="last")
+    view = view.sort_values("score", ascending=False, na_position="last")
 
 # -----------------------------
 # Summary metrics
 # -----------------------------
-total_companies = len(f)
-total_raised = f["total_raised"].sum(skipna=True)
-avg_raised = f["total_raised"].mean(skipna=True) if total_companies > 0 else None
-avg_score = round(float(f["score"].mean()), 1) if total_companies > 0 else None
+total_companies = len(view)
+total_raised = view["total_raised"].sum(skipna=True)
+avg_raised = view["total_raised"].mean(skipna=True) if total_companies > 0 else None
+avg_score = round(float(view["score"].mean()), 1) if total_companies > 0 else None
 
 def _flatten(xs):
     out = []
@@ -400,7 +384,7 @@ def _flatten(xs):
         out.extend(row)
     return out
 
-unique_investors = sorted(set(_flatten(f["notable_investors"])) - {""}) if total_companies else []
+unique_investors = sorted(set(_flatten(view["notable_investors"])) - {""}) if total_companies else []
 st.markdown("### Summary")
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Companies", total_companies)
@@ -414,32 +398,33 @@ c5.metric("Avg score", "—" if avg_score is None else f"{avg_score}")
 # -----------------------------
 st.markdown("### Companies")
 if total_companies == 0:
-    if not include_late:
-        st.info("No Seed/Series A companies match your filters. Adjust filters or include later-stage (Series B+).")
-    else:
-        st.info("No companies match your filters.")
+    st.info("No companies match your filters.")
 else:
-    for _, r in f.iterrows():
+    for _, r in view.iterrows():
         name = r["company"]
         with st.container(border=True):
-            # Title line with badges
-            thesis_badge = as_badge(r["thesis"])
-            stage_badge = as_badge(r["stage"])
-            money_badge = as_badge(fmt_money(r["total_raised"]))
-            score_badge = as_badge(f"Score {r['score']}")
-            title_line = "  ".join([f"**{name}**", thesis_badge, stage_badge, money_badge, score_badge])
-            st.markdown(title_line, unsafe_allow_html=True)
+            # Title + badges
+            badges = [
+                f"**{name}**",
+                as_badge(r["thesis"]),
+                as_badge(r["stage"]),
+                as_badge(fmt_money(r["total_raised"])),
+                as_badge(f"Score {r['score']}")
+            ]
+            if r.get("_showcase_extra"):
+                badges.append(as_badge("Showcase extra"))
+            st.markdown("  ".join(badges), unsafe_allow_html=True)
 
             # One-liner
             st.write(r["one_liner"])
 
             # Key facts
-            col1, col2, col3, col4 = st.columns([3, 3, 3, 3])
-            col1.write(f"**Last round:** {r['last_round']}")
-            col2.write(f"**Website:** [{r['website']}]({r['website']})")
+            c1, c2, c3, c4 = st.columns([3, 3, 3, 3])
+            c1.write(f"**Last round:** {r['last_round']}")
+            c2.write(f"**Website:** [{r['website']}]({r['website']})")
             invs = ", ".join(r["notable_investors"]) if isinstance(r["notable_investors"], list) else "—"
-            col3.write(f"**Notable investors:** {invs if invs else '—'}")
-            col4.write(f"**Thesis:** {r['thesis']}")
+            c3.write(f"**Notable investors:** {invs if invs else '—'}")
+            c4.write(f"**Thesis:** {r['thesis']}")
 
             # Score breakdown
             with st.expander("Score breakdown"):
@@ -465,18 +450,17 @@ else:
             a1, a2, a3, a4 = st.columns([2, 2, 3, 3])
 
             owner_val = st.session_state["owners"].get(name, "")
-            owner_input = a1.text_input("Owner", value=owner_val, key=f"owner_{name}")
-            st.session_state["owners"][name] = owner_input.strip()
+            st.session_state["owners"][name] = a1.text_input("Owner", value=owner_val, key=f"owner_{name}").strip()
 
             status_val = st.session_state["status"].get(name, "New")
-            status_input = a2.selectbox("Status", ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"],
-                                        index=["New", "Reviewing", "Waiting on Data", "Pass", "Advance"].index(status_val) if status_val in ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"] else 0,
-                                        key=f"status_{name}")
-            st.session_state["status"][name] = status_input
+            st.session_state["status"][name] = a2.selectbox(
+                "Status", ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"],
+                index=["New", "Reviewing", "Waiting on Data", "Pass", "Advance"].index(status_val) if status_val in ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"] else 0,
+                key=f"status_{name}"
+            )
 
             note_val = st.session_state["notes_map"].get(name, "")
-            note_input = a3.text_input("Short note", value=note_val, key=f"note_{name}")
-            st.session_state["notes_map"][name] = note_input
+            st.session_state["notes_map"][name] = a3.text_input("Short note", value=note_val, key=f"note_{name}")
 
             link = deep_link_to_copilot(name, r["website"])
             if link:
@@ -499,7 +483,7 @@ export_cols = [
     "notable_investors", "one_liner", "website", "sources", "why_usv", "why_now",
     "score"
 ]
-exp = f[export_cols].copy()
+exp = view[export_cols].copy()
 exp["owner"] = exp["company"].apply(lambda n: st.session_state["owners"].get(n, ""))
 exp["status"] = exp["company"].apply(lambda n: st.session_state["status"].get(n, "New"))
 exp["note"]   = exp["company"].apply(lambda n: st.session_state["notes_map"].get(n, ""))
@@ -507,6 +491,7 @@ exp["note"]   = exp["company"].apply(lambda n: st.session_state["notes_map"].get
 csv = exp.to_csv(index=False)
 st.download_button("Download CSV", csv, "usv_deal_hotlist.csv", "text/csv", use_container_width=True)
 
+EXCEL_ENGINE = pick_excel_engine()
 if EXCEL_ENGINE:
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine=EXCEL_ENGINE) as writer:
