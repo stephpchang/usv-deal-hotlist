@@ -1,6 +1,6 @@
 # hotlist_app.py
 import os
-from urllib.parse import urlparse, urlencode, quote_plus
+from urllib.parse import urlparse, urlencode
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -78,9 +78,22 @@ def normalize_series_0_1(series: pd.Series) -> pd.Series:
         return pd.Series([0.0] * len(s), index=s.index)
     return (s - min_v) / (max_v - min_v)
 
+def stage_bucket(stage_text: str) -> str:
+    """Map raw stage text to simple buckets for filtering."""
+    s = (stage_text or "").lower()
+    s = s.replace("-", " ")
+    # order matters: check specific phrases first
+    if "pre seed" in s or "preseed" in s:
+        return "Seed"
+    if "series a" in s:
+        return "Series A"
+    if "seed" in s:
+        return "Seed"
+    # everything else = later-stage
+    return "Later (B+)"
+
 def compute_score_row(row: pd.Series, focus_theses: list[str]) -> float:
     funding = float(row.get("recent_funding_usd_norm") or 0.0)  # 0..1
-    # growth: average of hiring/traffic (already expected 0..1)
     h = row.get("hiring_index", np.nan)
     t = row.get("traffic_index", np.nan)
     growth = float(np.nanmean([h, t]))
@@ -119,16 +132,13 @@ def score_breakdown(row: pd.Series, focus_theses: list[str]) -> dict:
 def deep_link_to_copilot(name: str, website: str) -> str | None:
     if not DDLITE_URL:
         return None
-    # Pass both if available; your Copilot can read either 'company' or 'website'
     q = {}
     if name: q["company"] = name
     if website: q["website"] = website
     return f"{DDLITE_URL}?{urlencode(q)}" if q else DDLITE_URL
 
 # -----------------------------
-# Curated demo dataset (public-info tone)
-# Fields: company, thesis, stage, total_raised, last_round, notable_investors[list],
-#         one_liner, website, sources[list], why_usv, why_now, intro_hint
+# Curated demo dataset (same as before; stages will be bucketed)
 # Optional scoring fields you can add later: recent_funding_usd, hiring_index, traffic_index, founder_signal
 # -----------------------------
 data = [
@@ -171,7 +181,7 @@ data = [
         notable_investors=["IVP", "NEA", "Jeff Bezos"],
         one_liner="AI-powered conversational search with cited answers across the live web.",
         website="https://www.perplexity.ai/",
-        sources=["https://www.reuters.com/technology/"],  # placeholder source
+        sources=["https://www.reuters.com/technology/"],
         why_usv="Aligns with 'open internet' & machine intelligence; strong engagement loops.",
         why_now="Exploding daily usage; moving from consumer curiosity to daily workflow.",
         intro_hint="Ask about retention cohorts and enterprise/education use cases.",
@@ -287,13 +297,13 @@ data = [
 df = pd.DataFrame(data)
 
 # -----------------------------
-# Derived fields: domain, funding normalization, score
+# Derived fields: domain, funding normalization, stage bucket, score proxy
 # -----------------------------
 df["domain"] = df["website"].apply(canonical_domain)
-# recent_funding_usd can be added later; for now use total_raised as proxy
 df["recent_funding_usd"] = df.get("recent_funding_usd", pd.Series([np.nan]*len(df)))
 df["recent_funding_usd"] = df["recent_funding_usd"].fillna(df["total_raised"])
 df["recent_funding_usd_norm"] = normalize_series_0_1(df["recent_funding_usd"].fillna(0))
+df["stage_bucket"] = df["stage"].apply(stage_bucket)
 
 # -----------------------------
 # Simple de-duplication (domain or company)
@@ -307,7 +317,7 @@ deduped_count = dedupe_before - len(df)
 # Header / Value prop
 # -----------------------------
 st.title("🔥 USV Deal Hotlist")
-st.subheader("Curated companies aligned with USV’s theses")
+st.subheader("Curated companies aligned with USV’s theses.")
 st.caption("Demo uses public information and curated notes. No proprietary data or paid APIs.")
 if deduped_count > 0:
     st.caption(f"De-duplicated {deduped_count} item(s) by domain/company.")
@@ -318,19 +328,24 @@ if deduped_count > 0:
 if "owners" not in st.session_state: st.session_state["owners"] = {}
 if "status" not in st.session_state: st.session_state["status"] = {}
 if "notes_map" not in st.session_state: st.session_state["notes_map"] = {}
-
 STATUS_OPTS = ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"]
 
 # -----------------------------
-# Filters
+# Filters (Seed & A enforced by default)
 # -----------------------------
 with st.sidebar:
     st.header("Filter")
-    thesis_opts = ["All"] + sorted(df["thesis"].unique())
-    stage_opts = ["All"] + sorted(df["stage"].unique())
+    include_late = st.checkbox("Include later-stage (Series B+)", value=False)
+
+    base = df.copy()
+    if not include_late:
+        base = base[base["stage_bucket"].isin(["Seed", "Series A"])]
+
+    thesis_opts = ["All"] + sorted(base["thesis"].unique())
+    stage_opts = ["All"] + sorted(base["stage"].unique())
     pick_thesis = st.selectbox("Thesis", thesis_opts, index=0)
     pick_stage = st.selectbox("Stage", stage_opts, index=0)
-    min_amt = st.slider("Min total raised ($M)", 0, int((df["total_raised"].fillna(0).max()) / 1_000_000), 0)
+    min_amt = st.slider("Min total raised ($M)", 0, int((base["total_raised"].fillna(0).max()) / 1_000_000), 0)
 
     st.markdown("---")
     focus_theses = st.multiselect("Focus theses (score boost)", THESES, default=[])
@@ -340,8 +355,8 @@ with st.sidebar:
     st.markdown("---")
     hide_pass = st.checkbox("Hide 'Pass' status", value=False)
 
-# Apply basic filters
-f = df.copy()
+# Apply filters
+f = base.copy()
 if pick_thesis != "All":
     f = f[f["thesis"] == pick_thesis]
 if pick_stage != "All":
@@ -350,7 +365,6 @@ f = f[f["total_raised"].fillna(0) >= (min_amt * 1_000_000)]
 
 # Compute scores on the filtered subset
 f["score"] = f.apply(lambda r: compute_score_row(r, focus_theses), axis=1)
-# Keep breakdown for UI
 f["_breakdown"] = f.apply(lambda r: score_breakdown(r, focus_theses), axis=1)
 
 # Optional: hide 'Pass'
@@ -373,7 +387,7 @@ else:
     f = f.sort_values("score", ascending=False, na_position="last")
 
 # -----------------------------
-# Summary metrics (quick story)
+# Summary metrics
 # -----------------------------
 total_companies = len(f)
 total_raised = f["total_raised"].sum(skipna=True)
@@ -400,12 +414,15 @@ c5.metric("Avg score", "—" if avg_score is None else f"{avg_score}")
 # -----------------------------
 st.markdown("### Companies")
 if total_companies == 0:
-    st.info("No companies match your filters.")
+    if not include_late:
+        st.info("No Seed/Series A companies match your filters. Adjust filters or include later-stage (Series B+).")
+    else:
+        st.info("No companies match your filters.")
 else:
     for _, r in f.iterrows():
         name = r["company"]
         with st.container(border=True):
-            # Title line with badges (avoid nested f-strings)
+            # Title line with badges
             thesis_badge = as_badge(r["thesis"])
             stage_badge = as_badge(r["stage"])
             money_badge = as_badge(fmt_money(r["total_raised"]))
@@ -416,7 +433,7 @@ else:
             # One-liner
             st.write(r["one_liner"])
 
-            # Key facts row
+            # Key facts
             col1, col2, col3, col4 = st.columns([3, 3, 3, 3])
             col1.write(f"**Last round:** {r['last_round']}")
             col2.write(f"**Website:** [{r['website']}]({r['website']})")
@@ -444,7 +461,7 @@ else:
                 links = " · ".join([f"[source]({u})" for u in r["sources"]])
                 st.write(f"**Sources:** {links}")
 
-            # Assignment + Status + Deep link row
+            # Assignment + Status + Deep link
             a1, a2, a3, a4 = st.columns([2, 2, 3, 3])
 
             owner_val = st.session_state["owners"].get(name, "")
@@ -452,22 +469,22 @@ else:
             st.session_state["owners"][name] = owner_input.strip()
 
             status_val = st.session_state["status"].get(name, "New")
-            status_input = a2.selectbox("Status", STATUS_OPTS, index=STATUS_OPTS.index(status_val) if status_val in STATUS_OPTS else 0, key=f"status_{name}")
+            status_input = a2.selectbox("Status", ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"],
+                                        index=["New", "Reviewing", "Waiting on Data", "Pass", "Advance"].index(status_val) if status_val in ["New", "Reviewing", "Waiting on Data", "Pass", "Advance"] else 0,
+                                        key=f"status_{name}")
             st.session_state["status"][name] = status_input
 
-            # Optional notes (short)
             note_val = st.session_state["notes_map"].get(name, "")
             note_input = a3.text_input("Short note", value=note_val, key=f"note_{name}")
             st.session_state["notes_map"][name] = note_input
 
-            # Deep link to DD Copilot
             link = deep_link_to_copilot(name, r["website"])
             if link:
                 a4.link_button("Open in DD Copilot", link, use_container_width=True)
             else:
                 a4.caption("Set DDLITE_URL to enable Copilot deep link")
 
-            # Next action: copyable outreach note
+            # Next action
             ask = r.get("intro_hint") or "Ask for 3 customer references and latest traction metrics."
             outreach = f"Hi — exploring {name} for USV’s thesis. Could you intro me to the team? {ask}"
             st.write("**Next action:**")
@@ -482,12 +499,10 @@ export_cols = [
     "notable_investors", "one_liner", "website", "sources", "why_usv", "why_now",
     "score"
 ]
-
-# Build export DF with owner/status/notes merged in
 exp = f[export_cols].copy()
 exp["owner"] = exp["company"].apply(lambda n: st.session_state["owners"].get(n, ""))
 exp["status"] = exp["company"].apply(lambda n: st.session_state["status"].get(n, "New"))
-exp["note"] = exp["company"].apply(lambda n: st.session_state["notes_map"].get(n, ""))
+exp["note"]   = exp["company"].apply(lambda n: st.session_state["notes_map"].get(n, ""))
 
 csv = exp.to_csv(index=False)
 st.download_button("Download CSV", csv, "usv_deal_hotlist.csv", "text/csv", use_container_width=True)
